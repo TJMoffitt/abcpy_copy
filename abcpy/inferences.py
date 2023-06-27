@@ -424,7 +424,7 @@ class DrawFromPrior(InferenceMethod):
         return theta
 
 
-class RejectionABC(InferenceMethod):
+class RejectionABC(InferenceMethod):                                                                      # Delete <!>
     """This class implements the rejection algorithm based inference scheme [1] for
         Approximate Bayesian Computation.
 
@@ -707,7 +707,7 @@ class RejectionABC(InferenceMethod):
         return theta, distance, counter
 
 
-class PMCABC(BaseDiscrepancy, InferenceMethod):
+class PMCABC(BaseDiscrepancy, InferenceMethod):                                                                              # Delete <!>
     """
     This class implements a modified version of Population Monte Carlo based inference scheme for Approximate
     Bayesian computation of Beaumont et. al. [1]. Here the threshold value at `t`-th generation are adaptively chosen by
@@ -1083,7 +1083,7 @@ class PMCABC(BaseDiscrepancy, InferenceMethod):
         return accepted_cov_mats
 
 
-class PMC(BaseLikelihood, InferenceMethod):
+class PMC(BaseLikelihood, InferenceMethod):                                                                                              # Delete <!>
     """
     Population Monte Carlo based inference scheme of Cappé et. al. [1].
 
@@ -1488,7 +1488,7 @@ class PMC(BaseLikelihood, InferenceMethod):
         return accepted_cov_mats
 
 
-class SABC(BaseDiscrepancy, InferenceMethod):
+class SABC(BaseDiscrepancy, InferenceMethod):                                                                                                    # Delete <!>
     """
     This class implements a modified version of Simulated Annealing Approximate Bayesian Computation (SABC) of [1]
     when the prior is non-informative.
@@ -2031,7 +2031,7 @@ class SABC(BaseDiscrepancy, InferenceMethod):
         return accepted_cov_mats
 
 
-class ABCsubsim(BaseDiscrepancy, InferenceMethod):
+class ABCsubsim(BaseDiscrepancy, InferenceMethod):                                                                                   # Delete <!>
     """This class implements Approximate Bayesian Computation by subset simulation (ABCsubsim) algorithm of [1].
 
     [1] M. Chiachio, J. L. Beck, J. Chiachio, and G. Rus., Approximate Bayesian computation by subset
@@ -2443,7 +2443,7 @@ class ABCsubsim(BaseDiscrepancy, InferenceMethod):
             return accepted_cov_mats_transformed, t, 0, counter
 
 
-class RSMCABC(BaseDiscrepancy, InferenceMethod):
+class RSMCABC(BaseDiscrepancy, InferenceMethod):                                                                                         # Delete <!>
     """This class implements Replenishment Sequential Monte Carlo Approximate Bayesian computation of
     Drovandi and Pettitt [1].
 
@@ -2823,7 +2823,7 @@ class RSMCABC(BaseDiscrepancy, InferenceMethod):
         return accepted_cov_mats
 
 
-class APMCABC(BaseDiscrepancy, InferenceMethod):
+class APMCABC(BaseDiscrepancy, InferenceMethod):                                                                                                     # Delete <!>
     """This class implements Adaptive Population Monte Carlo Approximate Bayesian computation of
     M. Lenormand et al. [1].
 
@@ -3175,7 +3175,7 @@ class APMCABC(BaseDiscrepancy, InferenceMethod):
         return accepted_cov_mats
 
 
-class SMCABC(BaseDiscrepancy, InferenceMethod):
+class SMCABC(BaseDiscrepancy, InferenceMethod):                                                                                                  # Delete <!>
     """This class implements two versions of Sequential Monte Carlo Approximate Bayesian computation, following either
      the original in Del Moral et al. [1] or the newer version in Bernton et al. [3]. The first one is commonly used
      when standard statistics based ABC is done (for instance with Euclidean distance), while the second one is instead
@@ -4070,7 +4070,7 @@ class SMCABC(BaseDiscrepancy, InferenceMethod):
         return accepted_cov_mats
 
 
-class MCMCMetropoliHastings(BaseLikelihood, InferenceMethod):
+class MCMCMetropoliHastings(BaseLikelihood, InferenceMethod):                                                                                    # Delete <!>
     """
     Simple Metropolis-Hastings MCMC working with the approximate likelihood functions Approx_likelihood, with
     multivariate normal proposals.
