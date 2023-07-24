@@ -4824,16 +4824,16 @@ class ABCpyLink(ProbModel):
 
 	def sample(self, _shape=(1,)):
 
-		probs = torch.ones(self.num_dists) / self.num_dists
-		categorical = Categorical(probs)
-		sampled_dists = categorical.sample(_shape)
+		#probs = torch.ones(self.num_dists) / self.num_dists
+		#categorical = Categorical(probs)
+		#sampled_dists = categorical.sample(_shape)
 
-		samples = []
-		for sampled_dist in sampled_dists:
-			sample = self.dists[sampled_dist].sample((1,))
-			samples.append(sample)
+		#samples = []
+		##for sampled_dist in sampled_dists:
+		#	sample = self.dists[sampled_dist].sample((1,))
+		#	samples.append(sample)
 
-		samples = torch.cat(samples)
+		#samples = torch.cat(samples)
 
 		return samples
 
