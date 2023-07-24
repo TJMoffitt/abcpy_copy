@@ -4690,3 +4690,153 @@ class MCMCMetropoliHastings(BaseLikelihood, InferenceMethod):                   
             else:
                 accepted_cov_mats.append((covFactor * new_cov_mat + 1e-20 * new_cov_mat).reshape(1, 1))
         return accepted_cov_mats
+
+# using sgld code from https://github.com/ludwigwinkler/pytorch_MCMC/tree/master
+class SGLD_Sampler_abcpy(BaseLikelihood, InferenceMethod):
+
+
+    #def __init__(probmodel, step_size=0.01, num_steps=10000, num_chains=7, burn_in=500, pretrain=True, tune=True))
+    def __init__(self, root_models, distances, backend, seed=None):
+        self.model = root_models
+        # We define the joint Linear combination distance using all the distances for each individual models
+        self.distance = LinearCombination(root_models, distances)
+        self.backend = backend
+        self.rng = np.random.RandomState(seed)
+        self.logger = logging.getLogger(__name__)
+
+        # An object managing the bds objects
+        self.accepted_parameters_manager = AcceptedParametersManager(self.model)
+
+        # counts the number of simulate calls
+        self.simulation_counter = 0
+
+
+    def sample(self, observations, step_size=0.01, num_steps=10000, num_chains=7, burn_in=500, pretrain=True, tune=True, journal_file=None, path_to_save_journal=None):
+        # Observations need to be prepared to correct format
+        # 
+        # forward simulate creates [array([183.32569845]), array([214.16368762]), array([176.23175713])] originally
+        # We need to mold this to fit <What?>
+
+        # from abcpy.inferences import RejectionABC       # example 
+        # sampler = RejectionABC([height], [distance_calculator], backend, seed=1)
+        #  def __init__(self, root_models, distances, backend, seed=None):
+   
+
+        # def __init__(self, root_models, loglikfuns, backend, kernel=None, seed=None):
+
+        # height_obs = height.forward_simulate([170, 15], k=50) k is number of samples and this returns alist: [np.ndarray]  A list containing the sampled values as np-array.
+        # journal = sampler.sample([height_obs], n_sample, n_samples_per_param, epsilon)
+
+        gmm = ABCpyLink(observations, self.model)
+	    #gmm.generate_surface(observations, plot=True)    # Is this just taking the samples from observations?
+        # We need to adapt the existing root_model to fit the probmodel bellow 
+
+
+        sampler = SGLD_Sampler(probmodel=gmm,     # change this probmodel to fit with the existing scheme # corresponds to rootmodels
+                                                  # do for a single model initialy
+				       step_size=params.step_size,    # This is just an argument 
+				       num_steps=params.num_steps,      # This is just an argument 
+				       burn_in=params.burn_in,          # This is just an argument  
+				       pretrain=params.pretrain,           # checkthis
+				       tune=params.tune,                    # checkthis
+				       num_chains=params.num_chains)    # This is just an argument  
+        
+        sampler.sample_chains()
+	    sampler.posterior_dist()
+
+
+# The output of this sampler function should be a journal giving all of the relevant run details
+
+
+# We do this adaptation between the abcpy and gmm datastructure
+
+#class ABCpyLink(torch.nn.Module):
+
+
+# We need Probmodel() that implements forward, log_prob, prob and sample
+# We need to take our existing root_model and adapt a function that the sampler can use
+
+# A general model which can be used by any of the possible datatypes 
+class ABCpyLink(ProbModel):
+
+	def __init__(self, observations, model, batch_size):
+        self.observations = observations
+        self.model = model
+        self.dataloader = DataLoader(TensorDataset(self.observations), shuffle=True, batch_size=batch_size)
+
+        #dataloader = DataLoader(TensorDataset(torch.zeros(1,2)))
+
+		#dataloader = DataLoader(TensorDataset(torch.zeros(1,2))) # bogus dataloader
+		#ProbModel.__init__(self, dataloader)
+
+		#self.means = FloatTensor([[-1, -1.25], [-1, 1.25], [1.5, 1]])
+		# self.means = FloatTensor([[-1,-1.25]])
+		#self.num_dists = self.means.shape[0]
+		#I = FloatTensor([[1, 0], [0, 1]])
+		#I_compl = FloatTensor([[0, 1], [1, 0]])
+		#self.covars = [I * 0.5, I * 0.5, I * 0.5 + I_compl * 0.3]
+		# self.covars = [I * 0.9, I * 0.9, I * 0.9 + I_compl * 0.3]
+		#self.weights = [0.4, 0.2, 0.4]
+		#self.dists = []
+
+		#for mean, covar in zip(self.means, self.covars):
+		#	self.dists.append(MultivariateNormal(mean, covar))
+
+		#self.X_grid = None
+		#self.Y_grid = None
+		#self.surface = None
+
+		#self.param = torch.nn.Parameter(self.sample())
+
+
+
+	def forward(self, x=None):   # X here is an array of input parameters ?
+        output = self.model.forward_simulate(x, k=1)
+        # This needs to be formatted correctly 
+		                                                        #log_probs = torch.stack([weight * torch.exp(dist.log_prob(x)) for dist, weight in zip(self.dists, self.weights)], dim=1)
+		                                                        #log_prob = torch.log(torch.sum(log_probs, dim=1))
+                                                                #torch.log( )
+		return output
+
+	def log_prob(self, *x):
+        
+        data = next(self.dataloader.__iter__())
+        log_probs = [self.model.pdf(x_val) for x_val in data]
+		#log_probs = torch.stack([weight * torch.exp(dist.log_prob(self.param)) for dist, weight in zip(self.dists, self.weights)], dim=1)
+		log_prob = torch.log(torch.sum(log_probs, dim=1))
+
+		return {'log_prob': log_prob}
+
+	def prob(self, x):
+        #log_probs = [self.model.pdf(x_val) for x_val in x]
+		#log_probs = torch.stack([weight * torch.exp(dist.log_prob(self.param)) for dist, weight in zip(self.dists, self.weights)], dim=1)
+		#prob = torch.sum(log_probs, dim=1)
+
+		#return {'log_prob': log_prob}
+		#log_probs = torch.stack([weight * torch.exp(dist.log_prob(x)) for dist, weight in zip(self.dists, self.weights)], dim=1)
+		#log_prob = torch.sum(log_probs, dim=1)
+        data = next(self.dataloader.__iter__())
+        log_probs = [self.model.pdf(x_val) for x_val in data]
+		#log_probs = torch.stack([weight * torch.exp(dist.log_prob(self.param)) for dist, weight in zip(self.dists, self.weights)], dim=1)
+		prob = torch.sum(log_probs, dim=1)
+
+		return prob
+
+	def sample(self, _shape=(1,)):
+
+		probs = torch.ones(self.num_dists) / self.num_dists
+		categorical = Categorical(probs)
+		sampled_dists = categorical.sample(_shape)
+
+		samples = []
+		for sampled_dist in sampled_dists:
+			sample = self.dists[sampled_dist].sample((1,))
+			samples.append(sample)
+
+		samples = torch.cat(samples)
+
+		return samples
+
+	def reset_parameters(self):
+
+		self.param.data = self.sample()
