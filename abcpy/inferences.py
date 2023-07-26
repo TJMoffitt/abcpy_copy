@@ -4840,3 +4840,13 @@ class ABCpyLink(ProbModel):
 	def reset_parameters(self):
 
 		self.param.data = self.sample()
+
+
+#pytorch has implemented distributions in torch.distributions
+
+#https://pytorch.org/docs/stable/distributions.html
+#https://arxiv.org/pdf/1506.05254.pdf
+
+#Possibly create a dictionary map between abcpy functions and TORCH.DISTRIBUTIONS
+#As such mapping = {‘Uniform’: TORCH.DISTRIBUTIONS.Uniform.Uniform,.....}
+#And get mapping[type(model[index]).__name__ ] for each element in the model to reproduce our graph in pytorch?
