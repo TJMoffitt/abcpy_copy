@@ -423,3 +423,134 @@ class PenLogReg(Approx_likelihood, GraphTools):
                 ind += 1
             ref_data_stat[model_index] = np.squeeze(np.asarray(ref_data_stat[model_index]))
         return ref_data_stat
+
+
+class EnergyScore():
+
+    def __init__(self, statistics_calc, model, beta, mean = False):
+        """This class implements the approximate likelihood function which computes the approximate
+        likelihood using the synthetic likelihood approach described in Wood [1].
+        For synthetic likelihood approximation, we compute the robust precision matrix using Ledoit and Wolf's [2]
+        method.
+
+        [1] S. N. Wood. Statistical inference for noisy nonlinear ecological
+        dynamic systems. Nature, 466(7310):1102–1104, Aug. 2010.
+
+        [2] O. Ledoit and M. Wolf, A Well-Conditioned Estimator for Large-Dimensional Covariance Matrices,
+        Journal of Multivariate Analysis, Volume 88, Issue 2, pages 365-411, February 2004.
+
+
+        Parameters
+        ----------
+        statistics_calc : abcpy.statistics.Statistics
+            Statistics extractor object that conforms to the Statistics class.
+        """
+        self.model = model
+        self.beta = beta
+        self.mean = mean
+        #super(SynLikelihood, self).__init__(statistics_calc)
+
+    def loglikelihood(self, y_obs, y_sim):
+        # Computes the energy score of the samples
+        # y_obs = python list
+        # y_sim = python list of np arrays
+        n_obs = len(y_obs)
+        n_sim = len(y_sim)
+        y_obs_np = np.stack(y_obs)
+        y_sim_np = np.stack(y_sim)
+        if n_obs*y_sim_np[0].shape != self.model.get_output_dimension():
+            print("Use grad_log")
+
+
+
+        """observations is an array of size (n_obs, p) (p being the dimensionality), while simulations is an array
+        of size (n_sim, p). This works on numpy in the framework of the genBayes with SR paper.
+        We estimate this by building an empirical unbiased estimate of Eq. (2) in Ziel and Berk 2019"""
+
+
+        p = len(y_sim_np[0].shape)
+        diff_X_y = y_obs_np.reshape(n_obs, 1, -1) - y_sim_np.reshape(1, n_sim, p)
+        diff_X_y = np.einsum('ijk, ijk -> ij', diff_X_y, diff_X_y)
+        diff_X_tildeX = y_sim_np.reshape(1, n_sim, p) - y_sim_np.reshape(n_sim, 1, p)
+        diff_X_tildeX = np.einsum('ijk, ijk -> ij', diff_X_tildeX, diff_X_tildeX)
+        if self.beta != 2:
+            diff_X_y **= (self.beta / 2.0)
+            diff_X_tildeX **= (self.beta / 2.0)
+
+        result = 2 * np.sum(np.mean(diff_X_y, axis=1)) - n_obs * np.sum(diff_X_tildeX) / (n_sim * (n_sim - 1))
+
+        if self.mean:
+            result /= y_obs_np.shape[0]
+
+        return -result  # I think this should be negative here
+
+    
+    def gradloglikelihood(self, y_obs, y_sim, grad_index = 0):
+        # Computes the energy score of the samples
+        # y_obs = python list
+        # y_sim = python list of np arrays
+        y_obs_np = np.stack(y_obs)
+        y_sim_np = np.stack(y_sim)
+        n_sim = len(y_sim)
+        grad_index = grad_index
+        sim_x_dim = int(self.model.get_output_dimension()/n_sim)
+        print(sim_x_dim)
+        num_var_grad = y_sim_np[0].shape[0]/sim_x_dim  - 1
+
+
+        if num_var_grad == 0:
+            print("Use log_prob")
+            
+        y_sim_np = np.hsplit(y_sim_np,num_var_grad+1)
+        y_sim_gradients = y_sim_np[1:]  # This is a list of gradients for each parameter
+        y_sim_np = y_sim_np[0]
+        
+
+
+        # Note that one cannot use any y's with equal value for this simulation!
+
+        # Solving for grad of norm(xj, y)_{b,2} 
+            # sum of (xji - yi)^2
+            # assume y = y[ynum]
+            # assume x = x[xnum]
+        
+        # Remove this later
+        score = 0
+        for ynum in range(0,len(y_obs)):
+            
+            grad_x_y_norm_var = 0.0
+            for xnum in range(0, n_sim):
+                total_non_grad = 0
+                for x_dim in range(0,sim_x_dim):
+                    total_non_grad += (y_sim_np[xnum][x_dim] - y_obs_np[ynum][x_dim])**2
+                total_non_grad = total_non_grad**((self.beta/2) - 1)
+
+                total_grad = 0
+                for x_dim in range(0,sim_x_dim):
+                    total_grad += (y_sim_np[xnum][x_dim] - y_obs_np[ynum][x_dim])*y_sim_gradients[grad_index][xnum][x_dim]
+                total_grad = total_grad*2
+
+                grad_x_y_norm_var += (self.beta/2) * total_non_grad.item() * total_grad.item()
+
+            grad_x_y_norm = grad_x_y_norm_var*2/n_sim
+
+            # and again for the second portion
+            grad_x_x_norm = 0
+            for x1 in range(0, n_sim):
+                for x2 in range(0,n_sim):
+                    if x1 != x2:
+                        total_non_grad = 0
+                        for x_dim in range(0,sim_x_dim):
+                            total_non_grad += (y_sim_np[x1][x_dim] - y_sim_np[x2][x_dim])**2
+                        total_non_grad = total_non_grad**(self.beta/2 - 1)
+
+                        total_grad = 0
+                        for x_dim in range(0,sim_x_dim):
+                            total_grad += (y_sim_np[x1][x_dim] - y_sim_np[x2][x_dim])*(y_sim_gradients[grad_index][x1][x_dim] - y_sim_gradients[grad_index][x2][x_dim])
+                        total_grad = total_grad*2
+
+                        grad_x_x_norm += self.beta/2 * total_non_grad * total_grad
+            grad_x_x_norm = grad_x_x_norm*2/(n_sim*(n_sim-1))
+            score += grad_x_y_norm - grad_x_x_norm              # Check if this should be += or *=
+ 
+        return -score
