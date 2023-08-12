@@ -428,22 +428,14 @@ class PenLogReg(Approx_likelihood, GraphTools):
 class EnergyScore():
 
     def __init__(self, statistics_calc, model, beta, mean = False):
-        """This class implements the approximate likelihood function which computes the approximate
-        likelihood using the synthetic likelihood approach described in Wood [1].
-        For synthetic likelihood approximation, we compute the robust precision matrix using Ledoit and Wolf's [2]
-        method.
+        """
 
-        [1] S. N. Wood. Statistical inference for noisy nonlinear ecological
-        dynamic systems. Nature, 466(7310):1102–1104, Aug. 2010.
-
-        [2] O. Ledoit and M. Wolf, A Well-Conditioned Estimator for Large-Dimensional Covariance Matrices,
-        Journal of Multivariate Analysis, Volume 88, Issue 2, pages 365-411, February 2004.
-
-
-        Parameters
-        ----------
-        statistics_calc : abcpy.statistics.Statistics
-            Statistics extractor object that conforms to the Statistics class.
+        Energy Score:
+        Inputs:
+        self.model : Class - ABCpy conforming model class
+        self.beta  : float - The beta value to use in the norm functions
+        self.mean  : bool - Should the mean of the gradients be returned instead of the sum
+        
         """
         self.model = model
         self.beta = beta
@@ -454,21 +446,24 @@ class EnergyScore():
         # Computes the energy score of the samples
         # y_obs = python list
         # y_sim = python list of np arrays
+        
+        if y_sim[0].shape != y_sim[-1].shape:
+            return "Use gradloglikelihood"
+
         n_obs = len(y_obs)
         n_sim = len(y_sim)
+
+        
         y_obs_np = np.stack(y_obs)
         y_sim_np = np.stack(y_sim)
-        if n_obs*y_sim_np[0].shape != self.model.get_output_dimension():
-            print("Use grad_log")
-
-
+        
 
         """observations is an array of size (n_obs, p) (p being the dimensionality), while simulations is an array
         of size (n_sim, p). This works on numpy in the framework of the genBayes with SR paper.
         We estimate this by building an empirical unbiased estimate of Eq. (2) in Ziel and Berk 2019"""
 
 
-        p = len(y_sim_np[0].shape)
+        p = len(y_sim_np.shape)
         diff_X_y = y_obs_np.reshape(n_obs, 1, -1) - y_sim_np.reshape(1, n_sim, p)
         diff_X_y = np.einsum('ijk, ijk -> ij', diff_X_y, diff_X_y)
         diff_X_tildeX = y_sim_np.reshape(1, n_sim, p) - y_sim_np.reshape(n_sim, 1, p)
@@ -484,73 +479,51 @@ class EnergyScore():
 
         return -result  # I think this should be negative here
 
-    
-    def gradloglikelihood(self, y_obs, y_sim, grad_index = 0):
-        # Computes the energy score of the samples
-        # y_obs = python list
-        # y_sim = python list of np arrays
-        y_obs_np = np.stack(y_obs)
-        y_sim_np = np.stack(y_sim)
-        n_sim = len(y_sim)
-        grad_index = grad_index
-        sim_x_dim = int(self.model.get_output_dimension()/n_sim)
-        print(sim_x_dim)
-        num_var_grad = y_sim_np[0].shape[0]/sim_x_dim  - 1
 
 
-        if num_var_grad == 0:
-            print("Use log_prob")
-            
-        y_sim_np = np.hsplit(y_sim_np,num_var_grad+1)
-        y_sim_gradients = y_sim_np[1:]  # This is a list of gradients for each parameter
-        y_sim_np = y_sim_np[0]
+    def gradloglikelihood(self, y_obs, y_sim):
+
+        if y_sim[0].shape == y_sim[-1].shape:   # This still doesn't make sense as they could be the same if the number of parameters is equal #
+            return "Use loglikelihood"
+                                                                
+        n_sim = int(len(y_sim)/2)
+        n_obs = len(y_obs)
+
+        y_sim_tensor = torch.tensor(np.stack(y_sim[:n_sim], axis=0), requires_grad=True)
+        y_obs_tensor = torch.tensor(np.stack(y_obs, axis=0) , requires_grad=False)
+        
+        y_sim_jacobian_np = np.stack(y_sim[n_sim:]) # This will be dim : (n_sim, x_dim, theta_dim)        of height:x_dimension, width:parameter_dimension
+
+        gradientsumfirsthalf = np.zeros((1, y_sim_jacobian_np.shape[-1]))    # (g_dim (energy score so 1) , theta_dim)        
+        for y in y_obs_tensor:
+            for x_index, x in enumerate(y_sim_tensor):
+                x = x.clone().detach().requires_grad_(True)  ####### ENSURE THAT GRADIENT IS RESET OVER LOOPS! #######
+                outputval = self.BetaNorm(x, y)
+                outputval.backward(torch.ones_like(x))
+                x_grad = x.grad # Here we are getting (dg/dx1 , dg/ dx2 , dg/dx3 .... ) (1, x_dim) -> (1, x_dim)
+                dg_dtheta = np.dot(x_grad,y_sim_jacobian_np[x_index])
+                gradientsumfirsthalf += dg_dtheta 
+        gradientsumfirsthalf *= 2/n_sim  
         
 
+        gradientsumsecondhalf = np.zeros((1, y_sim_jacobian_np.shape[-1]))    # (1, theta_dim)
+        for x1_index, x1 in enumerate(y_sim_tensor):
+            for x2_index, x2 in enumerate(y_sim_tensor):                   
+                if x1_index == x2_index:
+                    continue
+                x1 = x1.clone().detach().requires_grad_(True)      
+                x2 = x2.clone().detach().requires_grad_(True)
+                outputval = self.BetaNorm(x1, x2)             
+                outputval.backward(torch.ones_like(x1))         
+                x1_grad = x1.grad    # (dg/dx1) (1, x_dim)
+                x2_grad = x2.grad    # (dg/dx2)
+                dg_dtheta_x1 = np.dot(x1_grad,y_sim_jacobian_np[x1_index]) # (1, x_dim) * (x_dim, theta_dim) -> (1, theta_dim)
+                dg_dtheta_x2 = np.dot(x2_grad,y_sim_jacobian_np[x2_index])  
+                gradientsumsecondhalf += dg_dtheta_x1 + dg_dtheta_x2                
+        gradientsumsecondhalf *= 1/((n_sim)*(n_sim-1))
 
-        # Note that one cannot use any y's with equal value for this simulation!
+        return gradientsumfirsthalf - gradientsumsecondhalf*n_obs # We multiply by n_obs here as we are taking the score over all y_values and it is the same for each
+                                               
 
-        # Solving for grad of norm(xj, y)_{b,2} 
-            # sum of (xji - yi)^2
-            # assume y = y[ynum]
-            # assume x = x[xnum]
-        
-        # Remove this later
-        score = 0
-        for ynum in range(0,len(y_obs)):
-            
-            grad_x_y_norm_var = 0.0
-            for xnum in range(0, n_sim):
-                total_non_grad = 0
-                for x_dim in range(0,sim_x_dim):
-                    total_non_grad += (y_sim_np[xnum][x_dim] - y_obs_np[ynum][x_dim])**2
-                total_non_grad = total_non_grad**((self.beta/2) - 1)
-
-                total_grad = 0
-                for x_dim in range(0,sim_x_dim):
-                    total_grad += (y_sim_np[xnum][x_dim] - y_obs_np[ynum][x_dim])*y_sim_gradients[grad_index][xnum][x_dim]
-                total_grad = total_grad*2
-
-                grad_x_y_norm_var += (self.beta/2) * total_non_grad.item() * total_grad.item()
-
-            grad_x_y_norm = grad_x_y_norm_var*2/n_sim
-
-            # and again for the second portion
-            grad_x_x_norm = 0
-            for x1 in range(0, n_sim):
-                for x2 in range(0,n_sim):
-                    if x1 != x2:
-                        total_non_grad = 0
-                        for x_dim in range(0,sim_x_dim):
-                            total_non_grad += (y_sim_np[x1][x_dim] - y_sim_np[x2][x_dim])**2
-                        total_non_grad = total_non_grad**(self.beta/2 - 1)
-
-                        total_grad = 0
-                        for x_dim in range(0,sim_x_dim):
-                            total_grad += (y_sim_np[x1][x_dim] - y_sim_np[x2][x_dim])*(y_sim_gradients[grad_index][x1][x_dim] - y_sim_gradients[grad_index][x2][x_dim])
-                        total_grad = total_grad*2
-
-                        grad_x_x_norm += self.beta/2 * total_non_grad * total_grad
-            grad_x_x_norm = grad_x_x_norm*2/(n_sim*(n_sim-1))
-            score += grad_x_y_norm - grad_x_x_norm              # Check if this should be += or *=
- 
-        return -score
+    def BetaNorm(self,x1, x2):                            
+        return abs(x1-x2).pow(2).sum(dim=x2.dim()).pow(self.beta/2)  
