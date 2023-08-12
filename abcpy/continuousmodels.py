@@ -117,6 +117,10 @@ class Uniform(ProbabilisticModel, Continuous):
             pdf_value = 0.
         self.calculated_pdf = pdf_value
         return pdf_value
+    
+    def gradlogpdf(self, input_values, x):
+        # we know that log(pdf(x)) is the same for all values [a,b] and 0 for [-inf,a]U[b,inf], hence grad is 0 wrt x [-inf,inf] and undef at {a,b} (continuous so never sampled)
+        return 0   
 
 
 class Normal(ProbabilisticModel, Continuous):
@@ -213,6 +217,14 @@ class Normal(ProbabilisticModel, Continuous):
         pdf = norm(mu, sigma).pdf(x)
         self.calculated_pdf = pdf
         return pdf
+    
+    def gradlogpdf(self, input_values, x):
+        n = len(x)
+        #loglikleyhood = -n*ln(sigma) - (n/2)*ln(2*math.pi) - (1/(2*sigma*sigma))*np.sum((x-mu)**2)
+        mu = input_values[0]
+        sigma = input_values[1]
+        gradloglikleyhood = (1/(sigma**2))*np.sum(x-mu)
+        return gradloglikleyhood 
 
 
 class StudentT(ProbabilisticModel, Continuous):
