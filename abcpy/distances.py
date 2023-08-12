@@ -334,7 +334,7 @@ class LogReg(Divergence):
 
         reg_inv = 1e5
         log_reg_model = linear_model.LogisticRegression(C=reg_inv, penalty='l1', max_iter=1000, solver='liblinear',
-                                                        random_state=self.rng.randint(0, np.iinfo(np.uint32).max))
+                                                        random_state=self.rng.randint(0, np.iinfo(np.uint32).max/2-1))
         log_reg_model.fit(training_set_features, training_set_labels)
         score = log_reg_model.score(training_set_features, training_set_labels)
         distance = 2.0 * (score - 0.5)
