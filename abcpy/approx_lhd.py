@@ -5,6 +5,7 @@ from scipy.stats import gaussian_kde, rankdata, norm
 from sklearn.covariance import ledoit_wolf
 
 from abcpy.graphtools import GraphTools
+import torch
 
 
 class Approx_likelihood(metaclass=ABCMeta):
@@ -446,7 +447,7 @@ class EnergyScore():
         # Computes the energy score of the samples
         # y_obs = python list
         # y_sim = python list of np arrays
-        
+
         if y_sim[0].shape != y_sim[-1].shape:
             return "Use gradloglikelihood"
 
@@ -463,7 +464,7 @@ class EnergyScore():
         We estimate this by building an empirical unbiased estimate of Eq. (2) in Ziel and Berk 2019"""
 
 
-        p = len(y_sim_np.shape)
+        p = y_sim_np.shape[-1]
         diff_X_y = y_obs_np.reshape(n_obs, 1, -1) - y_sim_np.reshape(1, n_sim, p)
         diff_X_y = np.einsum('ijk, ijk -> ij', diff_X_y, diff_X_y)
         diff_X_tildeX = y_sim_np.reshape(1, n_sim, p) - y_sim_np.reshape(n_sim, 1, p)
@@ -477,17 +478,18 @@ class EnergyScore():
         if self.mean:
             result /= y_obs_np.shape[0]
 
-        return -result  # I think this should be negative here
+        return result  # I think this should be negative here
 
 
 
     def gradloglikelihood(self, y_obs, y_sim):
 
-        if y_sim[0].shape == y_sim[-1].shape:   # This still doesn't make sense as they could be the same if the number of parameters is equal #
-            return "Use loglikelihood"
-                                                                
-        n_sim = int(len(y_sim)/2)
+        #if y_sim[0].shape == y_sim[-1].shape:   # This still doesn't make sense as they could be the same if the number of parameters is equal #
+        #    return "Use loglikelihood"
+        # print(y_sim)                                                        
+        n_sim = int(len(y_sim)/2)        # check this added [0] under assumption that it was getting the outer layer
         n_obs = len(y_obs)
+        # print(y_sim)
 
         y_sim_tensor = torch.tensor(np.stack(y_sim[:n_sim], axis=0), requires_grad=True)
         y_obs_tensor = torch.tensor(np.stack(y_obs, axis=0) , requires_grad=False)
@@ -495,10 +497,17 @@ class EnergyScore():
         y_sim_jacobian_np = np.stack(y_sim[n_sim:]) # This will be dim : (n_sim, x_dim, theta_dim)        of height:x_dimension, width:parameter_dimension
 
         gradientsumfirsthalf = np.zeros((1, y_sim_jacobian_np.shape[-1]))    # (g_dim (energy score so 1) , theta_dim)        
+        #print(gradientsumfirsthalf)
         for y in y_obs_tensor:
             for x_index, x in enumerate(y_sim_tensor):
                 x = x.clone().detach().requires_grad_(True)  ####### ENSURE THAT GRADIENT IS RESET OVER LOOPS! #######
+                #print(x)
+                #print(" ^ 1")
+                #print(y)
+                #print(" ^ 2")
                 outputval = self.BetaNorm(x, y)
+                #print(outputval)
+                #print(" ^ 3")
                 outputval.backward(torch.ones_like(x))
                 x_grad = x.grad # Here we are getting (dg/dx1 , dg/ dx2 , dg/dx3 .... ) (1, x_dim) -> (1, x_dim)
                 dg_dtheta = np.dot(x_grad,y_sim_jacobian_np[x_index])
@@ -525,5 +534,9 @@ class EnergyScore():
         return gradientsumfirsthalf - gradientsumsecondhalf*n_obs # We multiply by n_obs here as we are taking the score over all y_values and it is the same for each
                                                
 
-    def BetaNorm(self,x1, x2):                            
-        return abs(x1-x2).pow(2).sum(dim=x2.dim()).pow(self.beta/2)  
+    def BetaNorm(self,x1, x2):      # If we are dealing with 2d arrays here we should get an array of size 
+        #print(x1)
+        #print(x2)
+        # print(abs(x1-x2).pow(2))
+        # print(x2.dim())                           
+        return abs(x1-x2).pow(2).sum(dim=-1).pow(self.beta/2)  # return abs(x1-x2).pow(2).sum(dim=x2.dim()).pow(self.beta/2)   TEST THIS FOR MULTIDIMENSIONAL

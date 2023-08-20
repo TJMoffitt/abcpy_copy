@@ -367,7 +367,7 @@ class ProbabilisticModel(metaclass=ABCMeta):
         Sets the output values of the model. This method is commonly used to set new values after perturbing the old
         ones.
 
-
+        
         Parameters
         ----------
         values: numpy array or dimension equal to output dimension.
@@ -379,6 +379,8 @@ class ProbabilisticModel(metaclass=ABCMeta):
         """
         if not isinstance(values, np.ndarray):
             raise TypeError('Elements of input list are not of type numpy array.')
+        print(values)
+        print(self.get_output_dimension())
         if values.shape[0] != self.get_output_dimension():
             raise IndexError('Size of input list not equal to number output dimensions.')
 

@@ -513,10 +513,61 @@ class GraphTools:
                     simulation_result = npc.run_nested(model.forward_simulate, model.get_input_values(),
                                                        n_samples_per_param, rng=rng)
                 else:
+
                     simulation_result = model.forward_simulate(model.get_input_values(), n_samples_per_param, rng=rng)
                 result.append(simulation_result)
             else:
                 return None
         return result
+    
+
+    def gradsimulate(self, n_samples_per_param, rng=np.random.RandomState(), npc=None):
+        """Simulates data of each model using the currently sampled or perturbed parameters.
+
+        Parameters
+        ----------
+        rng: random number generator
+            The random number generator to be used.
+
+        Returns
+        -------
+        list
+            Each entry corresponds to the simulated data of one model.
+        """
+        result = []
+        for model in self.model:
+            parameters_compatible = model._check_input(model.get_input_values())
+            if parameters_compatible:
+                if npc is not None and npc.communicator().Get_size() > 1:
+                    simulation_result = npc.run_nested(model.grad_forward_simulate, model.get_input_values(),
+                                                       n_samples_per_param, rng=rng)
+                else:
+                    simulation_result = model.grad_forward_simulate(model.get_input_values(), n_samples_per_param, rng=rng)
+
+                result.append(simulation_result)
+            else:
+                return None
+        return result
+    
+    # def transform(self):
+    #     """
+    #     Takes as input a n dimensional array of theta values from R^{DxN}
+    #     Returns the transformed variables in their corresponding space in the model
+    #     """
+    #     return [model.transform_variables(model.get_input_values()) for model in self.model]
+    
+    # def transform_post(self, model, variables):
+    #     """
+    #     Takes as input a n dimensional array of theta values from R^{DxN}
+    #     Returns the transformed variables in their corresponding space in the model
+    #     """
+    #     return model.transform_variables(variables)
+    
+    # def jacobian(self):
+    #     print(self.model[0].get_input_values())
+    #     print(" ^ input value")
+    #     return [model.transform_jacobian(model.get_input_values()) for model in self.model]
+
+
 
 

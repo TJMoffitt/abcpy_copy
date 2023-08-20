@@ -123,6 +123,33 @@ class SumCombination(JointApprox_likelihood):
             combined_likelihood += self.approx_lhds[ind].loglikelihood(d1[ind], d2[ind])
 
         return combined_likelihood
+    
+    def gradloglikelihood(self, d1, d2):
+        """Combine the distances between different datasets in theta dimensions.
+
+        Parameters
+        ----------
+        d1, d2: list
+            A list, containing lists describing the different data sets
+        """
+        if not isinstance(d1, list):
+            raise TypeError('Data is not of allowed types')
+        if not isinstance(d2, list):
+            raise TypeError('Data is not of allowed types')
+        if len(d1) != len(d2):
+            raise ValueError('Both the datasets should contain dataset for each of the root models')
+
+        combined_likelihood = False
+        for ind in range(len(self.approx_lhds)):
+            if combined_likelihood == True:
+                combined_likelihood += self.approx_lhds[ind].gradloglikelihood(d1[ind], d2[ind])
+            else:
+                combined_likelihood = self.approx_lhds[ind].gradloglikelihood(d1[ind], d2[ind])
+
+        return combined_likelihood
 
     def likelihood(self, d1, d2):
         return np.exp(self.loglikelihood(d1, d2))
+
+    def gradlikelihood(self, d1, d2):
+        return np.exp(self.gradloglikelihood(d1, d2))

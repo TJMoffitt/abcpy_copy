@@ -323,6 +323,18 @@ class StudentT(ProbabilisticModel, Continuous):
         self.calculated_pdf = pdf
         return pdf
 
+    def gradlogpdf(self, input_values, x):
+        #n = len(x)
+        #loglikleyhood = -n*ln(sigma) - (n/2)*ln(2*math.pi) - (1/(2*sigma*sigma))*np.sum((x-mu)**2)
+        #mu = input_values[0]
+        #sigma = input_values[1]
+        #gradloglikleyhood = (1/(sigma**2))*np.sum(x-mu)
+        #return gradloglikleyhood 
+        t = input_values[0]
+        v = input_values[1]
+        gradlogpdf = -t*(v+1)*(1/(v+t**2))
+        return gradlogpdf
+
 
 class MultivariateNormal(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='Multivariate Normal'):
@@ -446,7 +458,15 @@ class MultivariateNormal(ProbabilisticModel, Continuous):
         pdf = multivariate_normal(mean, cov).pdf(x)
         self.calculated_pdf = pdf
         return pdf
-
+    
+    def gradlogpdf(self, input_values, x):
+        dim = self._dimension
+        # Extract parameters
+        mean = np.array(input_values[0:dim])
+        cov = np.array(input_values[dim:dim + dim ** 2]).reshape((dim, dim))
+        covinv = np.linalg.inv(cov)
+        deviation = x - mean
+        return -np.dot(covinv, deviation) 
 
 class MultiStudentT(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='MultiStudentT'):
@@ -595,6 +615,23 @@ class MultiStudentT(ProbabilisticModel, Continuous):
         self.calculated_pdf = density
         return density
 
+    def gradlogpdf(self, input_values, x):
+        dim = self.get_output_dimension()
+
+        # Extract parameters
+        mean = np.array(input_values[0:dim])
+        cov = np.array(input_values[dim:dim + dim ** 2]).reshape((dim, dim))
+        df = input_values[-1]
+        p = len(mean)
+
+        covinv = np.linalg.inv(cov)
+        deviation = x - mean
+        covadj_deviation = np.dot(covinv, deviation)
+        squareadj_deviation = np.dot(np.atleast2d(deviation).T, covadj_deviation)
+        return -(df + p)*(covadj_deviation/(df + squareadj_deviation))
+        
+        
+
 
 class LogNormal(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='LogNormal'):
@@ -691,7 +728,12 @@ class LogNormal(ProbabilisticModel, Continuous):
         pdf = lognorm(scale=np.exp(mu), s=sigma).pdf(x)
         self.calculated_pdf = pdf
         return pdf
+    
+    def gradlogpdf(self, input_values, x):
+        mu = input_values[0]
+        sigma = input_values[1]
 
+        return -(1/x) - (numpy.log(x) - mu)/(x*(sigma**2))
 
 class Exponential(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='Exponential'):
@@ -787,3 +829,7 @@ class Exponential(ProbabilisticModel, Continuous):
         pdf = expon(scale=scale).pdf(x)
         self.calculated_pdf = pdf
         return pdf
+    
+    def gradlogpdf(self, input_values, x):
+        rate = input_values[0]
+        return -rate

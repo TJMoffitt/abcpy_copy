@@ -72,6 +72,7 @@ class AcceptedParametersManager:
                 # bc.destroy
 
         if not accepted_parameters is None:
+            print(str(accepted_parameters) + " <--- acceptedparametersmanager accepted_parameters")
             self.accepted_parameters_bds = backend.broadcast(accepted_parameters)
         if not accepted_weights is None:
             self.accepted_weights_bds = backend.broadcast(accepted_weights)
