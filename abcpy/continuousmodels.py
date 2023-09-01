@@ -3,7 +3,7 @@ from scipy.special import gamma
 from scipy.stats import multivariate_normal, norm, lognorm, expon
 
 from abcpy.probabilisticmodels import ProbabilisticModel, Continuous, InputConnector
-
+import torch
 
 class Uniform(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='Uniform'):
@@ -219,12 +219,36 @@ class Normal(ProbabilisticModel, Continuous):
         return pdf
     
     def gradlogpdf(self, input_values, x):
-        n = len(x)
+        # n = len(x)
         #loglikleyhood = -n*ln(sigma) - (n/2)*ln(2*math.pi) - (1/(2*sigma*sigma))*np.sum((x-mu)**2)
         mu = input_values[0]
         sigma = input_values[1]
-        gradloglikleyhood = (1/(sigma**2))*np.sum(x-mu)
+        print(str(mu) + str(" < mu normal"))
+        print(str(sigma) + str(" < sigma normal"))
+        print(str(x) + str(" < x normal "))
+        gradloglikleyhood = - (1/(sigma**2))*np.sum(x-mu)
         return gradloglikleyhood 
+
+    def transform(self, input_values):
+        return [input_values[0], np.exp(input_values[1])]
+    
+    #def transformation_inverse(self, input_values):
+    #    return [input_values[0], np.log(input_values[1])]
+
+    #def transformation_jacobian(self, input_values):
+    #    return(np.array[[1,0],[0, np.exp(input_values[1])]])
+    
+    def jacobian_list(self):
+        return [False, torch.exp]
+
+    #def transformation_inverse_jacobian(self, input_values):
+    #    return(np.array[[1,0],[0,1/input_values[1]]])
+
+    def inverse_transform_list(self):
+        return [False, torch.log]
+    
+    def transform_list(self):
+        return [False, torch.exp]
 
 
 class StudentT(ProbabilisticModel, Continuous):
@@ -330,10 +354,16 @@ class StudentT(ProbabilisticModel, Continuous):
         #sigma = input_values[1]
         #gradloglikleyhood = (1/(sigma**2))*np.sum(x-mu)
         #return gradloglikleyhood 
+        values = transformations()
         t = input_values[0]
         v = input_values[1]
         gradlogpdf = -t*(v+1)*(1/(v+t**2))
         return gradlogpdf
+    
+
+
+    
+        
 
 
 class MultivariateNormal(ProbabilisticModel, Continuous):
@@ -732,8 +762,22 @@ class LogNormal(ProbabilisticModel, Continuous):
     def gradlogpdf(self, input_values, x):
         mu = input_values[0]
         sigma = input_values[1]
+        print(str(mu) + str(" < mu"))
+        print(str(sigma) + str(" < sigma"))
+        print(str(x) + str(" < x"))
+        return (-(1/x) - (np.log(x) - mu)/(x*(sigma**2))).item()
 
-        return -(1/x) - (numpy.log(x) - mu)/(x*(sigma**2))
+    def jacobian_list(self):
+        return [False, torch.exp]
+
+    def transform(self, input_values):
+        return [input_values[0], np.exp(input_values[1])]
+    
+    def inverse_transform_list(self):
+        return [False, torch.log]
+    
+    def transform_list(self):
+        return [False, torch.exp]
 
 class Exponential(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='Exponential'):

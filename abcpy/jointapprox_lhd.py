@@ -133,8 +133,10 @@ class SumCombination(JointApprox_likelihood):
             A list, containing lists describing the different data sets
         """
         if not isinstance(d1, list):
+            print(d1)
             raise TypeError('Data is not of allowed types')
         if not isinstance(d2, list):
+            print(d2)
             raise TypeError('Data is not of allowed types')
         if len(d1) != len(d2):
             raise ValueError('Both the datasets should contain dataset for each of the root models')

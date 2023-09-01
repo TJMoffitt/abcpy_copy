@@ -379,8 +379,7 @@ class ProbabilisticModel(metaclass=ABCMeta):
         """
         if not isinstance(values, np.ndarray):
             raise TypeError('Elements of input list are not of type numpy array.')
-        print(values)
-        print(self.get_output_dimension())
+
         if values.shape[0] != self.get_output_dimension():
             raise IndexError('Size of input list not equal to number output dimensions.')
 
@@ -812,6 +811,9 @@ class Hyperparameter(ProbabilisticModel):
         # multiply, this would mean that all pdfs become 0. Setting the return value to 1 ensures proper computation of
         # the overall pdf.
         return 1.
+
+    def gradlogpdf(self, input_values, x):
+        return 0 
 
 
 class ModelResultingFromOperation(ProbabilisticModel):

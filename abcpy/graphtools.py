@@ -2,6 +2,8 @@ import numpy as np
 
 from abcpy.probabilisticmodels import Hyperparameter, ModelResultingFromOperation
 
+import torch
+
 
 class GraphTools:
     """This class implements all methods that will be called recursively on the graph structure."""
@@ -208,82 +210,291 @@ class GraphTools:
             The resulting pdf,as well as the next index to be considered in the parameters list.
         """
         self.set_parameters(parameters)
-        result = self._recursion_pdf_of_prior(models, parameters, mapping, is_root)
+        print(" TESTING ")
+        result = self._recursion_grad_log_pdf_of_prior(models, parameters, mapping, is_root)
         return result
 
-    def _recursion_grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
-        """
-        Calculates the joint gradient of the log probability density function of the prior of the specified models at the given parameter values.
-        Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
+    # def _recursion_grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+    #     """
+    #     Calculates the joint gradient of the log probability density function of the prior of the specified models at the given parameter values.
+    #     Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
 
-        Parameters
-        ----------
-        models: list of abcpy.ProbabilisticModel objects
-            Defines the models for which the pdf of their prior should be evaluated
-        parameters: python list
-            The parameters at which the pdf should be evaluated
-        mapping: list of tuples
-            Defines the mapping of probabilistic models and index in a parameter list.
-        is_root: boolean
-            A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
+    #     Parameters
+    #     ----------
+    #     models: list of abcpy.ProbabilisticModel objects
+    #         Defines the models for which the pdf of their prior should be evaluated
+    #     parameters: python list
+    #         The parameters at which the pdf should be evaluated
+    #     mapping: list of tuples
+    #         Defines the mapping of probabilistic models and index in a parameter list.
+    #     is_root: boolean
+    #         A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
 
-        Returns
-        -------
-        list
-            The resulting grad log pdf,as well as the next index to be considered in the parameters list.
-        """
-        # At the beginning of calculation, obtain the mapping
-        if is_root:
+    #     Returns
+    #     -------
+    #     list
+    #         The resulting grad log pdf,as well as the next index to be considered in the parameters list.
+    #     """
+    #     # At the beginning of calculation, obtain the mapping
+    #     if is_root:
+    #         mapping, garbage_index = self._get_mapping()
+
+    #     # The pdf of each root model is first calculated separately
+    #     result = [0.0] * len(models)
+
+    #     for i, model in enumerate(models):
+    #         # If the model is not a root model, the pdf of this model, given the prior, should be calculated
+    #         if not is_root and not (isinstance(model, ModelResultingFromOperation)):
+    #             # Define a helper list which will contain the parameters relevant to the current model for pdf calculation
+    #             relevant_parameters = []
+
+    #             for mapped_model, model_index in mapping:
+    #                 if mapped_model == model:
+    #                     parameter_index = model_index
+    #                     # for j in range(model.get_output_dimension()):
+    #                     relevant_parameters.append(parameters[parameter_index])
+    #                     # parameter_index+=1
+    #                     break
+    #             if len(relevant_parameters) == 1:
+    #                 relevant_parameters = relevant_parameters[0]
+    #             else:
+    #                 relevant_parameters = np.array(relevant_parameters)
+    #         else:
+    #             relevant_parameters = []
+
+    #         # Mark whether the parents of each model have been visited before for this model to avoid repeated calculation.
+    #         visited_parents = [False for j in range(len(model.get_input_models()))]
+    #         # For each parent, the pdf of this parent has to be calculated as well.
+    #         for parent_index, parent in enumerate(model.get_input_models()):
+    #             # Only calculate the pdf if the parent has never been visited for this model
+    #             if not (visited_parents[parent_index]):
+    #                 grad_log_pdf = self._recursion_grad_log_pdf_of_prior([parent], parameters, mapping=mapping, is_root=False)
+    #                 input_models = model.get_input_models()
+    #                 for j in range(len(input_models)):
+    #                     if input_models[j][0] == parent:
+    #                         visited_parents[j] = True
+    #                 result[i] += grad_log_pdf
+    #         if not is_root:
+    #             if model.calculated_grad_log_pdf is None:
+    #                 result[i] += model.grad_log_pdf(model.get_input_values(), relevant_parameters)
+    #             else:
+    #                 result[i] += 0.0
+
+    #                 # Multiply the pdfs of all roots together to give an overall pdf.
+    #     temporary_result = result
+    #     result = 0.0
+    #     for individual_result in temporary_result:
+    #         result += individual_result
+
+    #     return result
+
+    # def _recursion_grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+    #     """
+    #     Calculates the joint gradient of the log probability density function of the prior of the specified models at the given parameter values.
+    #     Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
+
+    #     Parameters
+    #     ----------
+    #     models: list of abcpy.ProbabilisticModel objects
+    #         Defines the models for which the pdf of their prior should be evaluated
+    #     parameters: python list
+    #         The parameters at which the pdf should be evaluated
+    #     mapping: list of tuples
+    #         Defines the mapping of probabilistic models and index in a parameter list.
+    #     is_root: boolean
+    #         A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
+
+    #     Returns
+    #     -------
+    #     list
+    #         The resulting grad log pdf,as well as the next index to be considered in the parameters list.
+    #     """
+    #     print(" 1")
+    #     # At the beginning of calculation, obtain the mapping
+    #     if is_root:
+    #         mapping, garbage_index = self._get_mapping()
+    #     print(" 2")
+    #     # The pdf of each root model is first calculated separately
+    #     # result = [0.0] * len(models)
+    #     print(str(" Length of model parameters :") + str(len(parameters)))
+    #     #result = [[0.0] * len(parameters[modelindex])] for modelindex, model in enumerate(models)] # This only works in one dimension, 
+    #     result = [0.0 * len(parameters)]
+
+    #     for i, model in enumerate(models):
+    #         # If the model is not a root model, the pdf of this model, given the prior, should be calculated
+    #         if not is_root and not (isinstance(model, ModelResultingFromOperation)):
+    #             # Define a helper list which will contain the parameters relevant to the current model for pdf calculation
+    #             relevant_parameters = []
+
+    #             for mapped_model, model_index in mapping:
+    #                 if mapped_model == model:
+    #                     parameter_index = model_index
+    #                     # for j in range(model.get_output_dimension()):
+    #                     relevant_parameters.append(parameters[parameter_index])
+    #                     # parameter_index+=1
+    #                     break
+    #             if len(relevant_parameters) == 1:
+    #                 relevant_parameters = relevant_parameters[0]
+    #             else:
+    #                 relevant_parameters = np.array(relevant_parameters)
+    #         else:
+    #             relevant_parameters = []
+
+    #         # Mark whether the parents of each model have been visited before for this model to avoid repeated calculation.
+    #         visited_parents = [False for j in range(len(model.get_input_models()))]
+    #         # For each parent, the pdf of this parent has to be calculated as well.
+    #         for parent_index, parent in enumerate(model.get_input_models()):
+    #             # Only calculate the pdf if the parent has never been visited for this model
+    #             if not (visited_parents[parent_index]):
+    #                 grad_log_pdf = self._recursion_grad_log_pdf_of_prior([parent], parameters, mapping=mapping, is_root=False)
+    #                 input_models = model.get_input_models()
+    #                 for j in range(len(input_models)):
+    #                     if input_models[j][0] == parent:
+    #                         visited_parents[j] = True
+    #                 result[i] += grad_log_pdf
+    #         if not is_root: 
+    #             if model.calculated_pdf is None:
+                    
+    #                 result[i] += model.gradlogpdf(model.get_input_values(), relevant_parameters)
+    #                 print(result[i])
+    #                 print(" ^ A Grad Log PDF ")
+    #             else:
+    #                 result[i] += 0.0
+    #                 print(result[i])
+    #                 print(" ^ A Grad Log PDF ")
+
+    #                 # Multiply the pdfs of all roots together to give an overall pdf.
+    #     print(" --- ")
+    #     print(parameters)
+    #     print(result)
+    #     print(" --- ")
+    #     #temporary_result = result
+    #     #result = 0.0
+    #     #for individual_result in temporary_result:
+    #     #    result += individual_result
+
+    #     return result
+
+    # # def _recursion_grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+    # #     for model in models:
+    # #         print(model.get_input_models())
+    # #         result = [0.0] * len(parameters)
+    # #         for parent_index, parent in enumerate(model.get_input_models()):
+    # #             print(self.jacobian())
+    # #             #print(parent_index)
+    # #             #print(parent)
+    # #             #print(parent.get_input_values())
+    # #             print(" =========== ")
+    # #             print(parent_index)
+    # #             print(parent.get_input_values())
+    # #             print(parameters[parent_index])
+    # #             result[parent_index] += parent.gradlogpdf(parent.get_input_values(), parameters[parent_index])
+    # #             if parent not in model.get_input_models():
+    # #                 print(parent.r_jacobian())
+    # #             print(result)
+    # #             print(" =========== ")
+    # #         return result
+    # def grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+    #     self.set_parameters(parameters)
+    #     for model in models:
+    #         jacobians = []
+    #         mapping, garbage_index = self._get_mapping()
+    #         print(mapping)
+    #         jacobians_list = [0]*len(mapping)
+    #         grad_log_prior_array = [0.0]*len(mapping)
+    #         for element in mapping:
+    #             print(element)
+    #             print(" ^ 1")
+    #             print(element[0].get_input_values())
+    #             grad_log_prior_array[element[1]] = element[0].gradlogpdf(element[0].get_input_values(), parameters[element[1]])
+    #             #try:
+    #             jacobian_list = element[0].jacobian_list()
+    #             for parent_index, parent in enumerate(element[0].get_input_models()):
+    #                 #print(parent)
+    #                 #print(" ^ 2")
+    #                 for listelement in mapping:
+    #                     if listelement[0] == parent:
+    #                         jacobians_list[listelement[1]] = jacobian_list[parent_index]
+    #                         #print(listelement[0])
+    #                         ##print(parent)
+    #                         #print(" *** ")
+    #             #print(jacobians_list)
+
+    #             #print(jacobians)
+    #             #except:
+    #                 #print(str(element[0])+ "has no jacobian list")
+    #         #print(grad_log_prior_array)
+    #         #print(jacobians)
+    #             #print(element[0])
+    #             #print(element[1])
+    #             #print(element[0].get_input_values())
+    #         #print(garbage_index)
+    #         # models_unordered = self._recursion_grad_log_pdf_of_prior(model, parameters)
+    #         # print(models_unordered)
+    #         # for element in models_unordered:
+    #         #     print(element.get_input_values())
+
+            
+    #     #return result
+
+    def grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+        # self.set_parameters(parameters)
+        for model in models:
             mapping, garbage_index = self._get_mapping()
+            grad_log_prior_array = [0.0]*len(mapping)
+            for element in mapping:
+                #print(element)
+                #print(" ^ 1")
+                #print(element[0].get_input_values())
+                theta_values = element[0].get_input_values()
+                #print(str(theta_values) + " < Theta Values Got from chain")
+                transformed = self.apply_local_transform(element[0], theta_values)
+                #print(str(transformed) + " < Transformed Values through T(theta)")
+                grad_log_prior_array[element[1]] = element[0].gradlogpdf(transformed, parameters[element[1]])
+                #try:
+                #jacobian_list = element[0].jacobian_list()
+                #for parent_index, parent in enumerate(element[0].get_input_models()):
+                ##    #print(parent)
+                #    #print(" ^ 2")
+                #    for listelement in mapping:
+                #        if listelement[0] == parent:
+                #            jacobians_list[listelement[1]] = jacobian_list[parent_index]
+                
+            #print(grad_log_prior_array)
+            return grad_log_prior_array
 
-        # The pdf of each root model is first calculated separately
-        result = [0.0] * len(models)
+    def apply_local_transform(self,element,values):
 
-        for i, model in enumerate(models):
-            # If the model is not a root model, the pdf of this model, given the prior, should be calculated
-            if not is_root and not (isinstance(model, ModelResultingFromOperation)):
-                # Define a helper list which will contain the parameters relevant to the current model for pdf calculation
-                relevant_parameters = []
-
-                for mapped_model, model_index in mapping:
-                    if mapped_model == model:
-                        parameter_index = model_index
-                        # for j in range(model.get_output_dimension()):
-                        relevant_parameters.append(parameters[parameter_index])
-                        # parameter_index+=1
-                        break
-                if len(relevant_parameters) == 1:
-                    relevant_parameters = relevant_parameters[0]
-                else:
-                    relevant_parameters = np.array(relevant_parameters)
+        output_array = [0.0] * len(values)
+        transforms = element.transform_list()
+        inputmodels = element.get_input_models()
+        for index, element in enumerate(values):
+            transform = transforms[index]
+            if transform != False and ("Hyperparameter" not in str(inputmodels[index])):
+                output_array[index] = transforms[index](torch.tensor(element)).item()
             else:
-                relevant_parameters = []
+                output_array[index] = element
 
-            # Mark whether the parents of each model have been visited before for this model to avoid repeated calculation.
-            visited_parents = [False for j in range(len(model.get_input_models()))]
-            # For each parent, the pdf of this parent has to be calculated as well.
-            for parent_index, parent in enumerate(model.get_input_models()):
-                # Only calculate the pdf if the parent has never been visited for this model
-                if not (visited_parents[parent_index]):
-                    grad_log_pdf = self._recursion_grad_log_pdf_of_prior([parent], parameters, mapping=mapping, is_root=False)
-                    input_models = model.get_input_models()
-                    for j in range(len(input_models)):
-                        if input_models[j][0] == parent:
-                            visited_parents[j] = True
-                    result[i] += grad_log_pdf
-            if not is_root:
-                if model.calculated_grad_log_pdf is None:
-                    result[i] += model.grad_log_pdf(model.get_input_values(), relevant_parameters)
-                else:
-                    result[i] += 0.0
+        return output_array
+    # def _recursion_grad_log_pdf_of_prior(self, node, parameters, mapping=None, is_root=True):
+    #     functions = []
+    #     if "abcpy.probabilisticmodels.Hyperparameter" not in str(type(node)): # CHANGE THIS!!! complete hack
+    #         print(type(node))
+    #         functions.append(node)
+    #     print(node)
+    #     for parent in node.get_input_models():
+    #         parent_functions = self._recursion_grad_log_pdf_of_prior(parent, parameters)
+    #         if parent_functions != []:
+    #             for element in parent_functions:
+    #                 functions.append(element)
+    #     return functions
 
-                    # Multiply the pdfs of all roots together to give an overall pdf.
-        temporary_result = result
-        result = 0.0
-        for individual_result in temporary_result:
-            result += individual_result
+    # def recursive_leaf(self, leaf):
+    #     parent_index, parent in enumerate(leaf.get_input_models()):
+    #         if [(type(element) == float) for element in parent.get_input_values()]:
+    #             return [parent for parent in ]
+    #         else:
 
-        return result
 
     def _get_mapping(self, models=None, index=0, is_not_root=False):
         """Returns a mapping of model and first index corresponding to the outputs in this model in parameter lists.
@@ -513,8 +724,9 @@ class GraphTools:
                     simulation_result = npc.run_nested(model.forward_simulate, model.get_input_values(),
                                                        n_samples_per_param, rng=rng)
                 else:
-
-                    simulation_result = model.forward_simulate(model.get_input_values(), n_samples_per_param, rng=rng)
+                    # print(model.get_input_values())
+                    modelparams = self.transform()[0]
+                    simulation_result = model.forward_simulate(modelparams, n_samples_per_param, rng=rng)
                 result.append(simulation_result)
             else:
                 return None
@@ -536,37 +748,197 @@ class GraphTools:
         """
         result = []
         for model in self.model:
-            parameters_compatible = model._check_input(model.get_input_values())
+            #print(model.get_input_values())
+            parameters_compatible = model._check_input(model.transform_variables(model.get_input_values()))
             if parameters_compatible:
                 if npc is not None and npc.communicator().Get_size() > 1:
-                    simulation_result = npc.run_nested(model.grad_forward_simulate, model.get_input_values(),
+                    simulation_result = npc.run_nested(model.grad_forward_simulate, model.transform_variables(model.get_input_values()),
                                                        n_samples_per_param, rng=rng)
                 else:
-                    simulation_result = model.grad_forward_simulate(model.get_input_values(), n_samples_per_param, rng=rng)
+
+                    #print(model.get_input_values())
+                    #print(model.get_input_values())
+
+                    modelparams = model.transform_variables(model.get_input_values()) #self.transform()[0]
+                    #print(modelparams)
+                    simulation_result = model.grad_forward_simulate(modelparams, n_samples_per_param, rng=rng)
 
                 result.append(simulation_result)
             else:
                 return None
         return result
     
-    # def transform(self):
-    #     """
-    #     Takes as input a n dimensional array of theta values from R^{DxN}
-    #     Returns the transformed variables in their corresponding space in the model
-    #     """
-    #     return [model.transform_variables(model.get_input_values()) for model in self.model]
+    def transform(self):
+        """
+        Takes as input a n dimensional array of theta values from R^{DxN}
+        Returns the transformed variables in their corresponding space in the model
+        """
+        return [model.transform_variables(model.get_input_values()) for model in self.model]
     
-    # def transform_post(self, model, variables):
-    #     """
-    #     Takes as input a n dimensional array of theta values from R^{DxN}
-    #     Returns the transformed variables in their corresponding space in the model
-    #     """
-    #     return model.transform_variables(variables)
+    def transform_post(self, model, variables):
+        """
+        Takes as input a n dimensional array of theta values from R^{DxN}
+        Returns the transformed variables in their corresponding space in the model
+        """
+        return [np.array(variable) for variable in model.transform_variables(variables)]
     
-    # def jacobian(self):
-    #     print(self.model[0].get_input_values())
-    #     print(" ^ input value")
-    #     return [model.transform_jacobian(model.get_input_values()) for model in self.model]
+    def jacobian(self):
+        # print(self.model[0].get_input_values())
+        # print(" ^ input value")
+        for model in self.model:
+            #print(str(model.get_input_values()) + str(" < - Jacobian input value"))
+            return model.transform_jacobian(model.get_input_values())
+    
+    def current_input_values(self):
+        for model in self.model:
+            return model.get_input_values()
+        
+    def full_grad_log_prior(self, input_array):
+        output_array = [0.0] * len(input_array)
+        mapping, garbage_index = self._get_mapping()
+        for model in mapping:
+            input_values = model[0].get_input_values()
+            input_transformed = model[0].transform(input_values)
+            x_val = input_array[model[1]]
+            output_array[model[1]] = model[0].gradlogpdf(input_values, x_val)
+        return output_array
+    
+    def full_jacobian(self):
+        mapping, garbage_index = self._get_mapping()
+        output_array = [0.0] * len(mapping)
+        mapping_list = dict((x, y) for x, y in mapping)
+        for element in mapping_list:
+            jacobian = element.jacobian_list()   # This should the diagonal
+            for index, parent in enumerate(element.get_input_models()):
+                try:
+                    location = mapping_list[parent]
+                    jac_element = jacobian[index]
+                    output_array[location] = jac_element
+                except:
+                    pass
+
+        # Now we need to add any transformations into the final model!
+        model = self.model[0]
+        model_jacobian = model.jacobian_list()
+        for index, parent in enumerate(model.get_input_models()):
+                try:
+                    #print(" --- ")
+                    location = mapping_list[parent]
+                    #print(location)
+                    jac_element = model_jacobian[index]
+                    #print(index)
+                    #print(jac_element)
+                    output_array[location] = jac_element
+                except:
+                    pass
+
+
+        #print(output_array)
+        return output_array
+    
+    def apply_jacobian(self,values):
+        output_array = [0.0] * len(values)
+        jacobian = self.full_jacobian()
+
+        for index, element in enumerate(values):
+            transform = jacobian[index]
+            if transform != False:
+                output_array[index] = jacobian[index](torch.tensor(element)).item()
+            else:
+                output_array[index] = 1
+
+        return output_array
+
+    def full_inverse_transform(self):
+        mapping, garbage_index = self._get_mapping()
+        output_array = [0.0] * len(mapping)
+        mapping_list = dict((x, y) for x, y in mapping)
+        for element in mapping_list:
+            inverse_transform_list = element.inverse_transform_list()   # This should the diagonal
+            for index, parent in enumerate(element.get_input_models()):
+                try:
+                    location = mapping_list[parent]
+                    inverse_element = inverse_transform_list[index]
+                    output_array[location] = inverse_element
+                except:
+                    pass
+
+        # Now we need to add any transformations into the final model!
+        model = self.model[0]
+        model_inverse_transform = model.inverse_transform_list()
+        for index, parent in enumerate(model.get_input_models()):
+                try:
+                    location = mapping_list[parent]
+                    model_inverse_element = model_inverse_transform[index]
+                    output_array[location] = model_inverse_element
+                except:
+                    pass
+
+        return output_array
+    
+    def apply_full_inverse_transform(self,values):
+        output_array = [0.0] * len(values)
+        transforms = self.full_inverse_transform()
+        for index, element in enumerate(values):
+            transform = transforms[index]
+            if transform != False:
+                output_array[index] = np.array([transforms[index](torch.tensor(element)).item()])
+            else:
+                output_array[index] = element
+        return output_array
+
+    def full_transform(self):
+        mapping, garbage_index = self._get_mapping()
+        output_array = [0.0] * len(mapping)
+        mapping_list = dict((x, y) for x, y in mapping)
+        for element in mapping_list:
+            transform_list = element.transform_list()   # This should the diagonal
+            for index, parent in enumerate(element.get_input_models()):
+                try:
+                    location = mapping_list[parent]
+                    transform_element = transform_list[index]
+                    output_array[location] = transform_element
+                except:
+                    pass
+
+        # Now we need to add any transformations into the final model!
+        model = self.model[0]
+        model_transform = model.transform_list()
+        for index, parent in enumerate(model.get_input_models()):
+                try:
+                    location = mapping_list[parent]
+                    model_inverse_element = model_transform[index]
+                    output_array[location] = model_inverse_element
+                except:
+                    pass
+
+        return output_array
+    
+    def apply_full_transform(self,values):
+        output_array = [0.0] * len(values)
+        transforms = self.full_transform()
+        for index, element in enumerate(values):
+            transform = transforms[index]
+            if transform != False:
+                output_array[index] = np.array([transforms[index](torch.tensor(element)).item()])
+            else:
+                output_array[index] = element
+        return output_array
+
+
+    def add_nulls_scoringrule(self, scoring_rule):
+        scoring_rule = scoring_rule.tolist()
+        mapping = self._get_mapping()[0]
+        array_n = [0.0] * len(mapping)
+        model = self.model[0]
+        base_models = model.get_input_models()
+        mapping_list = dict((x, y) for x, y in mapping)
+        for index, element in enumerate(base_models):
+            array_n[mapping_list[element]] = scoring_rule[index]
+        return np.array(array_n)
+
+
+
 
 
 

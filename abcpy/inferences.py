@@ -5264,5 +5264,1320 @@ class basic_adSGLD(BaseLikelihood, InferenceMethod):
         return journal
 
 
+class adSGLD_transformedspace(BaseLikelihood, InferenceMethod):
+    """
+    Adaptive Stochastic Gradient Langevin Dyn working with the approximate likelihood functions Approx_likelihood
+
+    Adaptive Stochastic Gradient Langevin Dynamics Working with the approximate gradient log likelikhood.
+
+    Parameters
+    ----------
+    root_models : list
+        A list of the Probabilistic models corresponding to the observed datasets
+    gradloglikfuns : list of abcpy.approx_lhd.Approx_likelihood
+        List of Approx_loglikelihood object defining the approximated gradloglikelihood to be used; one for each model.
+    backend : abcpy.backends.Backend
+        Backend object defining the backend to be used.
+    #kernel : abcpy.perturbationkernel.PerturbationKernel, optional
+    #    PerturbationKernel object defining the perturbation kernel needed for the sampling. If not provided, the
+    #    DefaultKernel is used.
+    seed : integer, optional
+        Optional initial seed for the random number generator. The default value is generated randomly.
+
+    """
+
+    model = None
+    gradloglikfun = None
+    likfun = None     # Here for abstract class instatiation ( Remove (w class) or rewrite abstract for gradloglikfun)
+    kernel = None
+    rng = None
+
+    n_samples = None
+    n_samples_per_param = None
+
+    backend = None
+
+
+    def __init__(self, root_models, gradloglikfuns, backend, kernel=None, seed=None):
+        self.model = root_models
+        # We define the joint Sum of Loglikelihood functions using all the loglikelihoods for each individual models
+        self.gradloglikfun =  SumCombination(root_models, gradloglikfuns)   # Gradloglikfuns here is being initialised as [EnergyScore(stat_calc, self.model, 2)]
+        # self.likfun = SumCombination(root_models, gradloglikfuns)              # Delete This
+        mapping, garbage_index = self._get_mapping()
+        models = []
+        self.parameter_names_with_index = {}
+        for mdl, mdl_index in mapping:
+            models.append(mdl)
+            self.parameter_names_with_index[mdl.name] = mdl_index  # dict storing param names with index
+
+        self.parameter_names = [model.name for model in models]  # store parameter names
+
+        if kernel is None:
+            kernel = DefaultKernel(models)
+
+        self.kernel = kernel
+        self.backend = backend
+        self.rng = np.random.RandomState(seed)
+        self.logger = logging.getLogger(__name__)
+
+        # these are usually big tables, so we broadcast them to have them once
+        # per executor instead of once per task
+        self.accepted_parameters_manager = AcceptedParametersManager(self.model)            # The need for this is questionsable
+        # this is used to handle the data for adapting the covariance:
+        self.accepted_parameters_manager_adaptive_cov = AcceptedParametersManager(self.model)
+
+        self.simulation_counter = 0
+
+        self.dummy_backend = BackendDummy()
+
+    def sample(self, observations, n_samples, n_samples_per_param=100, burnin=1000, 
+               diffusion_factor=0.01, step_size=0.01, iniPoint=None, w_val = 1,
+               bounds=None, speedup_dummy=True, n_groups_correlated_randomness=None, use_tqdm=True,
+               journal_file=None, path_to_save_journal=None):
+        """Samples from the posterior distribution of the model parameter given the observed
+        data observations. The MCMC is run for burnin + n_samples steps, and n_samples_per_param are used at each step
+        to estimate the approximate loglikelihood. The burnin steps are then discarded from the chain stored in the
+        journal file.
+
+        During burnin, the covariance matrix is adapted from the steps generated up to that point, in a way similar to
+        what suggested in [1], after each adapt_proposal_cov_interval steps. Differently from the original algorithm in
+        [1], here the proposal covariance matrix is fixed after the end of the burnin steps.
+
+        In case the original parameter space is bounded (for instance with uniform prior on an interval), the MCMC can
+        be optionally run on a transformed space. Therefore, the covariance matrix describes proposals on the
+        transformed space; the acceptance rate then takes into account the Jacobian of the transformation. In order to
+        use MCMC with transformed space, you need to specify lower and upper bounds in the corresponding parameters (see
+        details in the description of `bounds`).
+
+        The returned journal file contains also information on acceptance rates (in the configuration dictionary).
+
+
+        Parameters
+        ----------
+        observations : list
+            A list, containing lists describing the observed data sets; one for each model.
+        n_samples : integer, optional
+            number of samples to generate. The default value is 10000.
+        n_samples_per_param : integer, optional
+            number of data points in each simulated data set. The default value is 100.
+        burnin : integer, optional
+            Number of burnin steps to discard. Defaults to 1000.
+        iniPoint : numpy.ndarray, optional
+            parameter value from where the sampling starts. By default sampled from the prior. Not used if journal_file
+            is passed.
+        
+        bounds : dictionary, optional
+            dictionary containing the lower and upper bound for the transformation to be applied to the parameters. The
+            key of each entry is the name of the parameter as defined in the model, while the value if a tuple (or list)
+            with `(lower_bound, upper_bound)` content. If the parameter is bounded on one side only, the other bound
+            should be set to 'None'. If a parameter is not in this dictionary, no transformation is applied to it.
+            If a parameter is bounded on two sides, the used transformation is based on the logit. If conversely it is
+            lower bounded, we apply instead a log transformation. Notice that we do not implement yet the transformation
+            for upper bounded variables. If no value is provided, the default value is None, which means no
+            transformation at all is applied.
+        speedup_dummy: boolean, optional.
+            If set to True, the map function is not used to parallelize simulations (for the new parameter value) when
+            the backend is Dummy. This can improve performance as it can exploit potential vectorization in the model.
+            However, this breaks reproducibility when using, for instance, BackendMPI with respect to BackendDummy, due
+            to the different way the random seeds are used when speedup_dummy is set to True. Please set this to False
+            if you are interested in preserving reproducibility across MPI and Dummy backend. Defaults to True.
+        n_groups_correlated_randomness: integer, optional
+            The number of groups to use to correlate the randomness in the correlated pseudo-marginal MCMC scheme.
+            Specifically, if provided, the n_samples_per_param simulations from the model are split in
+            n_groups_correlated_randomness groups. At each MCMC step, the random variables used in simulating the model
+            are the same as in the previous step for all n_samples_per_param simulations except for a single group,
+            for which fresh random variables are used.
+            In practice, this is done by storing the random seeds. This approach should reduce stickiness of the chain
+            and was discussed in [2] for the Bayesian Synthetic Likelihood framework. Notice that, when
+            n_groups_correlated_randomness > 0 and speedup_dummy is True, you obtain different results for different
+            values of n_groups_correlated_randomness due to different ways of handling random seeds.
+            When None, we do not keep track of the random seeds. Default value is None.
+        use_tqdm : boolean, optional
+            Whether using tqdm or not to display progress. Defaults to True.
+        journal_file: str, optional
+            Filename of a journal file to read an already saved journal file, from which the first iteration will start.
+            That's the only information used (it does not use the previous covariance matrix).
+            The default value is None.
+        path_to_save_journal: str, optional
+            If provided, save the journal at the provided path at the end of the inference routine.
+
+        Returns
+        -------
+        abcpy.output.Journal
+            A journal containing simulation results, metadata and optionally intermediate results.
+        """
+
+        if path_to_save_journal is not None:
+            path_to_save_journal = path_to_save_journal if '.jnl' in path_to_save_journal else path_to_save_journal + '.jnl'
+
+        accepted_parameters = []
+        accepted_parameters_burnin = []
+        if journal_file is None:
+            journal = Journal(0)
+            journal.configuration["type_model"] = [type(model).__name__ for model in self.model]
+            journal.configuration["type_lhd_func"] = [type(likfun).__name__ for likfun in self.gradloglikfun.approx_lhds]
+            journal.configuration["type_kernel_func"] = [type(kernel).__name__ for kernel in self.kernel.kernels] if \
+                isinstance(self.kernel, JointPerturbationKernel) else type(self.kernel)
+            journal.configuration["n_samples"] = self.n_samples
+            journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+            journal.configuration["burnin"] = burnin
+            journal.configuration["iniPoint"] = iniPoint
+            journal.configuration["bounds"] = bounds
+            journal.configuration["speedup_dummy"] = speedup_dummy
+            journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+            journal.configuration["use_tqdm"] = use_tqdm
+            journal.configuration["acceptance_rates"] = []
+            # Initialize chain: when not supplied, randomly draw it from prior distribution
+            # It is an MCMC chain: weights are always 1; forget about them
+            # accepted_parameter will keep track of the chain position
+            if iniPoint is None:
+                self.sample_from_prior(rng=self.rng)
+                accepted_parameter = self.get_parameters()
+                print(str(accepted_parameter) + "  <---- init param")
+            else:
+                accepted_parameter = iniPoint
+                if isinstance(accepted_parameter, np.ndarray) and len(accepted_parameter.shape) == 1 or isinstance(
+                        accepted_parameter, list) and not hasattr(accepted_parameter[0], "__len__"):
+                    # reshape whether we pass a 1d array or list.
+                    accepted_parameter = [np.array([x]) for x in accepted_parameter]  # give correct shape for later
+            if burnin == 0:
+                accepted_parameters_burnin.append(accepted_parameter)
+            self.logger.info("Calculate approximate loglikelihood")
+            # approx_log_likelihood_accepted_parameter = self._simulate_and_compute_log_lik(accepted_parameter)
+            # update the number of simulations (this tracks the number of parameters for which simulations are done;
+            # the actual number of simulations is this times n_samples_per_param))
+            self.simulation_counter += 1
+            self.acceptance_rate = 0
+        else:
+            # check the following:
+            self.logger.info("Restarting from previous journal")
+            journal = Journal.fromFile(journal_file)
+            # this is used to compute the overall acceptance rate:
+            accepted_parameter = journal.get_accepted_parameters(-1)[-1]  # go on from last MCMC step
+            journal.configuration["n_samples"] += self.n_samples  # add the total number of samples
+            journal.configuration["burnin"] = burnin
+            if journal.configuration["n_samples_per_param"] != self.n_samples_per_param:
+                warnings.warn("You specified a different n_samples_per_param from the one used in the passed "
+                                "journal_file; the algorithm will still work fine.")
+                journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+            journal.configuration["bounds"] = bounds  # overwrite
+            journal.configuration["speedup_dummy"] = speedup_dummy
+            journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+            approx_log_likelihood_accepted_parameter = journal.final_step_loglik
+            self.simulation_counter = journal.number_of_simulations[-1]  # update the number of simulations
+
+        accepted_parameter = self.apply_full_inverse_transform(accepted_parameter)
+        # main sgld algorithm
+        self.observations = observations
+
+        self.n = len(self.observations[0])
+        
+        self.diffusion_factor = diffusion_factor
+        self.theta_dim = len(accepted_parameter)
+        self.logger.info("Starting adSGLD")
+        self.step_size = step_size
+        self.xi = self.diffusion_factor
+        self.w = w_val
+        self.p_var = np.random.randn(self.theta_dim)
+        # current theta is accepted_parameter
+        # current N is burnin + n_samples
+        true_value = str(np.sum(observations)/20)
+        true_mu = str(np.std(observations))
+
+        for aStep in tqdm(range(burnin + n_samples), disable=not use_tqdm): 
+            print("True Value: " + true_value)
+            print("True Sigma: " + true_mu)
+            print(self.n)
+            self.logger.debug("Step {} of SGLD algorithm".format(aStep))
+            print("Step {} of SGLD algorithm".format(aStep))
+            self.set_parameters(accepted_parameter)
+            print(self.transform())
+
+
+            self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=[accepted_parameter])
+
+            current_parameter_grad_log_prior_pdf = np.array(self.grad_log_pdf_of_prior(self.model, self.apply_full_transform(accepted_parameter))) # You dont need to specify self.model or accepted_parameter here.... just pull directly in grad_log_pdf_of_prior
+            current_parameter_grad_log_prior_pdf = np.dot(current_parameter_grad_log_prior_pdf, np.diag(self.apply_jacobian(accepted_parameter)))
+
+            self.simulated_values = self.gradsimulate(n_samples_per_param) # CHECK THISSSS
+            parameter_grad_scoring_rule_value = np.dot(self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0], self.jacobian())
+            parameter_grad_scoring_rule_value = self.add_nulls_scoringrule(parameter_grad_scoring_rule_value)
+
+            if not np.isnan(parameter_grad_scoring_rule_value).any():
+                estimate_grad_u_theta = self.w*parameter_grad_scoring_rule_value
+                self.p_var = self.p_var - self.xi*self.p_var*self.step_size - estimate_grad_u_theta*self.step_size + ((2*self.diffusion_factor)**0.5)*np.random.randn(self.theta_dim)*self.step_size
+                print(str(self.p_var) + " < self.p_var updated")
+
+                accepted_parameter = [accepted_parameter[i] + (self.p_var*self.step_size)[i] for i in range(0,self.theta_dim)]
+                # accepted_parameter = accepted_parameter + [np.array([item]) for item in self.p_var*self.step_size]  # Check for efficient ways of doing this (perhaps to single np array)
+                print(str(accepted_parameter) + " < accepted_parameter updated")
+
+                crosprod = sum([i**2 for i in self.p_var])
+
+                self.xi = self.xi + (((1/self.n)*crosprod)-1)*self.step_size # self.n
+                print(str(self.xi) + " < self.xi updated")
+                # if aStep >= burnin:
+                #     accepted_parameters.append(accepted_parameter)
+                # else:
+                #     accepted_parameters_burnin.append(accepted_parameter)
+                self.set_parameters(accepted_parameter)
+                if aStep >= burnin:
+                    accepted_parameters.append(self.apply_full_transform(self.get_parameters())) #self.transform_post(self.model[0],self.get_parameters()))
+                else:
+                    accepted_parameters_burnin.append(self.apply_full_transform(self.get_parameters())) # self.transform_post(self.model[0],self.get_parameters()))#self.get_parameters())
+            
+
+
+
+
+        self.logger.info("Saving results to output journal")
+        self.acceptance_rate = 1 #/= journal.configuration["n_samples"]
+        self.logger.info("Saving results to output journal")
+        self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=accepted_parameters)
+        names_and_parameters = self._get_names_and_parameters()
+        if journal_file is not None:  # concatenate chains
+            journal.add_accepted_parameters(journal.get_accepted_parameters() + copy.deepcopy(accepted_parameters))
+            names_and_parameters = [(names_and_parameters[i][0],
+                                        journal.get_parameters()[names_and_parameters[i][0]] + names_and_parameters[i][1])
+                                    for i in range(len(names_and_parameters))]
+            journal.add_user_parameters(names_and_parameters)
+        else:
+            journal.add_accepted_parameters(copy.deepcopy(accepted_parameters))
+            journal.add_user_parameters(names_and_parameters)
+        journal.number_of_simulations.append(self.simulation_counter)
+        journal.configuration["acceptance_rates"].append(self.acceptance_rate)
+        journal.add_weights(np.ones((n_samples, 1)))
+        # store the final loglik to be able to restart the journal correctly
+        # journal.final_step_loglik = approx_log_likelihood_accepted_parameter
+
+
+        if path_to_save_journal is not None:  # save journal
+            journal.save(path_to_save_journal)
+
+        return journal
+
+    def add_nulls_scoringrule(self, scoring_rule):
+        scoring_rule = scoring_rule.tolist()
+        array_n = [0.0] * len(self.parameter_names_with_index)
+        model = self.model[0]
+        base_models = model.get_input_models()
+        mapping_list = dict((x, y) for x, y in self._get_mapping()[0])
+        for index, element in enumerate(base_models):
+            print(element)
+            try:
+                array_n[mapping_list[element]] = scoring_rule[index]
+            except:
+                print("passed " + str(element))
+                pass
+        return np.array(array_n)
+
+
+## DELETE THIs using for access to grad_log_prior
+class Testing_Grad_Prior(BaseLikelihood, InferenceMethod):
+
+
+    model = None
+    gradloglikfun = None
+    likfun = None     # Here for abstract class instatiation ( Remove (w class) or rewrite abstract for gradloglikfun)
+    kernel = None
+    rng = None
+
+    n_samples = None
+    n_samples_per_param = None
+
+    backend = None
+
+
+    def __init__(self, root_models, gradloglikfuns, backend, kernel=None, seed=None):
+        self.model = root_models
+        # We define the joint Sum of Loglikelihood functions using all the loglikelihoods for each individual models
+        self.gradloglikfun =  SumCombination(root_models, gradloglikfuns)   # Gradloglikfuns here is being initialised as [EnergyScore(stat_calc, self.model, 2)]
+        # self.likfun = SumCombination(root_models, gradloglikfuns)              # Delete This
+        mapping, garbage_index = self._get_mapping()
+        models = []
+        self.parameter_names_with_index = {}
+        for mdl, mdl_index in mapping:
+            models.append(mdl)
+            self.parameter_names_with_index[mdl.name] = mdl_index  # dict storing param names with index
+            
+
+        self.parameter_names = [model.name for model in models]  # store parameter names
+
+        print(self.parameter_names_with_index)
+        print(self.parameter_names)
+
+        if kernel is None:
+            kernel = DefaultKernel(models)
+
+        self.kernel = kernel
+        self.backend = backend
+        self.rng = np.random.RandomState(seed)
+        self.logger = logging.getLogger(__name__)
+
+        # these are usually big tables, so we broadcast them to have them once
+        # per executor instead of once per task
+        self.accepted_parameters_manager = AcceptedParametersManager(self.model)            # The need for this is questionsable
+        # this is used to handle the data for adapting the covariance:
+        self.accepted_parameters_manager_adaptive_cov = AcceptedParametersManager(self.model)
+
+        self.simulation_counter = 0
+
+        self.dummy_backend = BackendDummy()
+
+
+
+    def sample(self, observations, model_param_names, n_samples, n_samples_per_param=100, burnin=1000, 
+               diffusion_factor=0.01, step_size=0.001, iniPoint=None, w_val = 3,
+               bounds=None, speedup_dummy=True, n_groups_correlated_randomness=None, use_tqdm=True,
+               journal_file=None, path_to_save_journal=None):
+        """Samples from the posterior distribution of the model parameter given the observed
+        data observations. The MCMC is run for burnin + n_samples steps, and n_samples_per_param are used at each step
+        to estimate the approximate loglikelihood. The burnin steps are then discarded from the chain stored in the
+        journal file.
+
+        During burnin, the covariance matrix is adapted from the steps generated up to that point, in a way similar to
+        what suggested in [1], after each adapt_proposal_cov_interval steps. Differently from the original algorithm in
+        [1], here the proposal covariance matrix is fixed after the end of the burnin steps.
+
+        In case the original parameter space is bounded (for instance with uniform prior on an interval), the MCMC can
+        be optionally run on a transformed space. Therefore, the covariance matrix describes proposals on the
+        transformed space; the acceptance rate then takes into account the Jacobian of the transformation. In order to
+        use MCMC with transformed space, you need to specify lower and upper bounds in the corresponding parameters (see
+        details in the description of `bounds`).
+
+        The returned journal file contains also information on acceptance rates (in the configuration dictionary).
+
+
+        Parameters
+        ----------
+        observations : list
+            A list, containing lists describing the observed data sets; one for each model.
+        n_samples : integer, optional
+            number of samples to generate. The default value is 10000.
+        n_samples_per_param : integer, optional
+            number of data points in each simulated data set. The default value is 100.
+        burnin : integer, optional
+            Number of burnin steps to discard. Defaults to 1000.
+        iniPoint : numpy.ndarray, optional
+            parameter value from where the sampling starts. By default sampled from the prior. Not used if journal_file
+            is passed.
+        
+        bounds : dictionary, optional
+            dictionary containing the lower and upper bound for the transformation to be applied to the parameters. The
+            key of each entry is the name of the parameter as defined in the model, while the value if a tuple (or list)
+            with `(lower_bound, upper_bound)` content. If the parameter is bounded on one side only, the other bound
+            should be set to 'None'. If a parameter is not in this dictionary, no transformation is applied to it.
+            If a parameter is bounded on two sides, the used transformation is based on the logit. If conversely it is
+            lower bounded, we apply instead a log transformation. Notice that we do not implement yet the transformation
+            for upper bounded variables. If no value is provided, the default value is None, which means no
+            transformation at all is applied.
+        speedup_dummy: boolean, optional.
+            If set to True, the map function is not used to parallelize simulations (for the new parameter value) when
+            the backend is Dummy. This can improve performance as it can exploit potential vectorization in the model.
+            However, this breaks reproducibility when using, for instance, BackendMPI with respect to BackendDummy, due
+            to the different way the random seeds are used when speedup_dummy is set to True. Please set this to False
+            if you are interested in preserving reproducibility across MPI and Dummy backend. Defaults to True.
+        n_groups_correlated_randomness: integer, optional
+            The number of groups to use to correlate the randomness in the correlated pseudo-marginal MCMC scheme.
+            Specifically, if provided, the n_samples_per_param simulations from the model are split in
+            n_groups_correlated_randomness groups. At each MCMC step, the random variables used in simulating the model
+            are the same as in the previous step for all n_samples_per_param simulations except for a single group,
+            for which fresh random variables are used.
+            In practice, this is done by storing the random seeds. This approach should reduce stickiness of the chain
+            and was discussed in [2] for the Bayesian Synthetic Likelihood framework. Notice that, when
+            n_groups_correlated_randomness > 0 and speedup_dummy is True, you obtain different results for different
+            values of n_groups_correlated_randomness due to different ways of handling random seeds.
+            When None, we do not keep track of the random seeds. Default value is None.
+        use_tqdm : boolean, optional
+            Whether using tqdm or not to display progress. Defaults to True.
+        journal_file: str, optional
+            Filename of a journal file to read an already saved journal file, from which the first iteration will start.
+            That's the only information used (it does not use the previous covariance matrix).
+            The default value is None.
+        path_to_save_journal: str, optional
+            If provided, save the journal at the provided path at the end of the inference routine.
+
+        Returns
+        -------
+        abcpy.output.Journal
+            A journal containing simulation results, metadata and optionally intermediate results.
+        """
+# ###############################################################
+#         if bounds is None:
+#             # no transformation is performed
+#             self.transformer = DummyTransformer()
+#         else:
+#             if not isinstance(bounds, dict):
+#                 raise TypeError("Argument `bounds` need to be a dictionary")
+#             bounds_keys = bounds.keys()
+#             for key in bounds_keys:
+#                 if key not in self.parameter_names:
+#                     raise KeyError("The keys in argument `bounds` need to correspond to the parameter names used "
+#                                 "in defining the model")
+#                 if not hasattr(bounds[key], "__len__") or len(bounds[key]) != 2:
+#                     raise RuntimeError("Each entry in `bounds` need to be a tuple with 2 value, representing the lower "
+#                                     "and upper bound of the corresponding parameter. If the parameter is bounded on "
+#                                     "one side only, the other bound should be set to 'None'.")
+
+#             # create lower_bounds and upper_bounds_vector:
+#             lower_bound_transformer = np.array([None] * dim)
+#             upper_bound_transformer = np.array([None] * dim)
+
+#             for key in bounds_keys:
+#                 lower_bound_transformer[self.parameter_names_with_index[key]] = bounds[key][0]
+#                 upper_bound_transformer[self.parameter_names_with_index[key]] = bounds[key][1]
+
+#             # initialize transformer:
+#             self.transformer = BoundedVarTransformer(np.array(lower_bound_transformer),
+#                                                     np.array(upper_bound_transformer))
+
+
+###############################################################
+        self.model_param_names = model_param_names
+        #for model_name in self.model:
+        #    model_name.set_base_positions(self.base_positions())
+
+        if path_to_save_journal is not None:
+            path_to_save_journal = path_to_save_journal if '.jnl' in path_to_save_journal else path_to_save_journal + '.jnl'
+
+        accepted_parameters = []
+        accepted_parameters_burnin = []
+        if journal_file is None:
+            journal = Journal(0)
+            journal.configuration["type_model"] = [type(model).__name__ for model in self.model]
+            journal.configuration["type_lhd_func"] = [type(likfun).__name__ for likfun in self.gradloglikfun.approx_lhds]
+            journal.configuration["type_kernel_func"] = [type(kernel).__name__ for kernel in self.kernel.kernels] if \
+                isinstance(self.kernel, JointPerturbationKernel) else type(self.kernel)
+            journal.configuration["n_samples"] = self.n_samples
+            journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+            journal.configuration["burnin"] = burnin
+            journal.configuration["iniPoint"] = iniPoint
+            journal.configuration["bounds"] = bounds
+            journal.configuration["speedup_dummy"] = speedup_dummy
+            journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+            journal.configuration["use_tqdm"] = use_tqdm
+            journal.configuration["acceptance_rates"] = []
+            # Initialize chain: when not supplied, randomly draw it from prior distribution
+            # It is an MCMC chain: weights are always 1; forget about them
+            # accepted_parameter will keep track of the chain position
+            if iniPoint is None:
+                self.sample_from_prior(rng=self.rng)
+                accepted_parameter = self.get_parameters()
+                print(str(accepted_parameter) + "  <---- init param")
+            else:
+                accepted_parameter = iniPoint
+                if isinstance(accepted_parameter, np.ndarray) and len(accepted_parameter.shape) == 1 or isinstance(
+                        accepted_parameter, list) and not hasattr(accepted_parameter[0], "__len__"):
+                    # reshape whether we pass a 1d array or list.
+                    accepted_parameter = [np.array([x]) for x in accepted_parameter]  # give correct shape for later
+            if burnin == 0:
+                accepted_parameters_burnin.append(accepted_parameter)
+            self.logger.info("Calculate approximate loglikelihood")
+            # approx_log_likelihood_accepted_parameter = self._simulate_and_compute_log_lik(accepted_parameter)
+            # update the number of simulations (this tracks the number of parameters for which simulations are done;
+            # the actual number of simulations is this times n_samples_per_param))
+            self.simulation_counter += 1
+            self.acceptance_rate = 0
+        else:
+            # check the following:
+            self.logger.info("Restarting from previous journal")
+            journal = Journal.fromFile(journal_file)
+            # this is used to compute the overall acceptance rate:
+            accepted_parameter = journal.get_accepted_parameters(-1)[-1]  # go on from last MCMC step
+            journal.configuration["n_samples"] += self.n_samples  # add the total number of samples
+            journal.configuration["burnin"] = burnin
+            if journal.configuration["n_samples_per_param"] != self.n_samples_per_param:
+                warnings.warn("You specified a different n_samples_per_param from the one used in the passed "
+                                "journal_file; the algorithm will still work fine.")
+                journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+            journal.configuration["bounds"] = bounds  # overwrite
+            journal.configuration["speedup_dummy"] = speedup_dummy
+            journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+            approx_log_likelihood_accepted_parameter = journal.final_step_loglik
+            self.simulation_counter = journal.number_of_simulations[-1]  # update the number of simulations
+
+        # accepted_parameter_transformed = self.transformer.transform(accepted_parameter)
+        print(accepted_parameter)
+        accepted_parameter = self.apply_full_inverse_transform(accepted_parameter)
+        print(accepted_parameter)
+
+        # main sgld algorithm
+        self.observations = observations
+        self.n = len(self.observations)
+        self.diffusion_factor = diffusion_factor
+        self.theta_dim = len(accepted_parameter)
+        self.logger.info("Starting adSGLD")
+        self.step_size = step_size
+        self.xi = self.diffusion_factor
+        self.w = w_val
+        self.p_var = np.random.randn(self.theta_dim)
+        # current theta is accepted_parameter
+        # current N is burnin + n_samples
+
+
+        true_value = str(np.sum(observations)/len(observations[0]))
+        true_mu = str(np.std(observations))
+
+        for aStep in tqdm(range(burnin + n_samples), disable=not use_tqdm): 
+            # print(" $$$$$$")
+            # print(accepted_parameter)
+            # print(" $$$$$$")
+            #print(self.full_jacobian())
+            #print(" ###")
+            #print(self.full_grad_log_prior(accepted_parameter))
+            #print(" ### ")
+
+            self.logger.debug("Step {} of SGLD algorithm".format(aStep))
+            print("Step {} of SGLD algorithm".format(aStep))
+
+            print(accepted_parameter)
+            print(self.apply_full_transform(accepted_parameter))
+            print("True Value: " + true_value)
+            print("True Sigma: " + true_mu)
+            self.set_parameters(accepted_parameter)
+
+            current_parameter_grad_log_prior_pdf = np.array(self.grad_log_pdf_of_prior(self.model, self.apply_full_transform(accepted_parameter))) # You dont need to specify self.model or accepted_parameter here.... just pull directly in grad_log_pdf_of_prior
+            print(" >>>> ")
+            print(current_parameter_grad_log_prior_pdf)
+            print(accepted_parameter)
+            print(self.apply_jacobian(accepted_parameter))
+            current_parameter_grad_log_prior_pdf = np.dot(current_parameter_grad_log_prior_pdf, np.diag(self.apply_jacobian(accepted_parameter)))
+            print(current_parameter_grad_log_prior_pdf)
+            print(" >>>> ")
+
+            self.simulated_values = self.gradsimulate(n_samples_per_param) # CHECK THISSSS
+
+
+            parameter_grad_scoring_rule_value = np.dot(self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0], self.jacobian())
+            parameter_grad_scoring_rule_value = self.add_nulls_scoringrule(parameter_grad_scoring_rule_value)
+
+            #print("# ## ")
+            #print(current_parameter_grad_log_prior_pdf)
+            #print(self.w*parameter_grad_scoring_rule_value)
+            #print("#     ##")
+            estimate_grad_u_theta =  current_parameter_grad_log_prior_pdf - self.w*parameter_grad_scoring_rule_value 
+
+
+            accepted_parameter = [param.item() for param in accepted_parameter]
+            if not np.isnan(parameter_grad_scoring_rule_value).any():
+                accepted_parameter = accepted_parameter + 0.5*self.step_size*estimate_grad_u_theta + np.sqrt(self.step_size)*np.random.randn(self.theta_dim) #(self.p_var*self.step_size)[i] for i in range(0,self.theta_dim)]
+            else:  
+                for x in range(0,100):
+                    print(" NAN VALUE!")
+            accepted_parameter = [np.array(param) for param in accepted_parameter]
+            self.set_parameters(accepted_parameter)
+
+            #print(self.get_parameters())
+            #print(" 88 88 88")
+            if aStep >= burnin:
+                accepted_parameters.append(self.apply_full_transform(self.get_parameters())) #self.transform_post(self.model[0],self.get_parameters()))
+            else:
+                accepted_parameters_burnin.append(self.apply_full_transform(self.get_parameters())) # self.transform_post(self.model[0],self.get_parameters()))#self.get_parameters())
+            
+
+
+        mutotal = 0
+        sigmatotal = 0
+        for element in accepted_parameters:
+            mutotal += element[0].item()
+            sigmatotal += element[1].item()
+        print(str(np.sum(mutotal)/len(accepted_parameters)) + " Average Mu Value")
+        print(str(np.sum(sigmatotal)/len(accepted_parameters)) + " Average Sigma Value")
+        self.logger.info("Saving results to output journal")
+        self.acceptance_rate = 1.0 
+        self.logger.info("Saving results to output journal")
+        self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=accepted_parameters)
+        names_and_parameters = self._get_names_and_parameters()
+        print(names_and_parameters)
+        if journal_file is not None:  # concatenate chains
+            journal.add_accepted_parameters(journal.get_accepted_parameters() + copy.deepcopy(accepted_parameters))
+            names_and_parameters = [(names_and_parameters[i][0],
+                                        journal.get_parameters()[names_and_parameters[i][0]] + names_and_parameters[i][1])
+                                    for i in range(len(names_and_parameters))]
+            journal.add_user_parameters(names_and_parameters)
+        else:
+            journal.add_accepted_parameters(copy.deepcopy(accepted_parameters))
+            journal.add_user_parameters(names_and_parameters)
+        journal.number_of_simulations.append(self.simulation_counter)
+        journal.configuration["acceptance_rates"].append(self.acceptance_rate)
+        journal.add_weights(np.ones((n_samples, 1)))
+        # journal.add_weights(np.ones((journal.configuration['n_samples'], 1))) needed?
+        # store the final loglik to be able to restart the journal correctly
+        #journal.final_step_loglik = approx_log_likelihood_accepted_parameter
+
+
+        if path_to_save_journal is not None:  # save journal
+            journal.save(path_to_save_journal)
+
+        return journal
+
+    # def add_nulls_scoringrule(self, scoring_rule):
+    #     scoring_rule = scoring_rule.tolist()
+    #     array_n = [0.0] * len(self.parameter_names_with_index)
+    #     for element_index, element in enumerate(self.model_param_names):
+    #         if element in self.model_param_names:
+
+    #             array_n[self.parameter_names_with_index[element]] = scoring_rule[element_index]
+    #     return np.array(array_n)
+    
+    def add_nulls_scoringrule(self, scoring_rule):
+        scoring_rule = scoring_rule.tolist()
+        array_n = [0.0] * len(self.parameter_names_with_index)
+        model = self.model[0]
+        base_models = model.get_input_models()
+        mapping_list = dict((x, y) for x, y in self._get_mapping()[0])
+        for index, element in enumerate(base_models):
+            print(element)
+            try:
+                array_n[mapping_list[element]] = scoring_rule[index]
+            except:
+                print("passed " + str(element))
+                pass
+        return np.array(array_n)
+
+
+    # def base_positions(self):
+    #     numbers = []
+    #     for element_index, element in enumerate(self.model_param_names):
+    #         numbers.append(self.parameter_names_with_index[element])
+        #return numbers
+
+
+
+
+# class pdmp_zigzag(BaseLikelihood, InferenceMethod):
+#     """
+#     Adaptive Stochastic Gradient Langevin Dyn working with the approximate likelihood functions Approx_likelihood
+
+#     Adaptive Stochastic Gradient Langevin Dynamics Working with the approximate gradient log likelikhood.
+
+#     Parameters
+#     ----------
+#     root_models : list
+#         A list of the Probabilistic models corresponding to the observed datasets
+#     gradloglikfuns : list of abcpy.approx_lhd.Approx_likelihood
+#         List of Approx_loglikelihood object defining the approximated gradloglikelihood to be used; one for each model.
+#     backend : abcpy.backends.Backend
+#         Backend object defining the backend to be used.
+#     #kernel : abcpy.perturbationkernel.PerturbationKernel, optional
+#     #    PerturbationKernel object defining the perturbation kernel needed for the sampling. If not provided, the
+#     #    DefaultKernel is used.
+#     seed : integer, optional
+#         Optional initial seed for the random number generator. The default value is generated randomly.
+
+#     """
+
+#     model = None
+#     gradloglikfun = None
+#     likfun = None     # Here for abstract class instatiation ( Remove (w class) or rewrite abstract for gradloglikfun)
+#     kernel = None
+#     rng = None
+
+#     n_samples = None
+#     n_samples_per_param = None
+
+#     backend = None
+
+
+#     def __init__(self, root_models, gradloglikfuns, backend, kernel=None, seed=None):
+#         self.model = root_models
+#         # We define the joint Sum of Loglikelihood functions using all the loglikelihoods for each individual models
+#         self.gradloglikfun =  SumCombination(root_models, gradloglikfuns)   # Gradloglikfuns here is being initialised as [EnergyScore(stat_calc, self.model, 2)]
+#         # self.likfun = SumCombination(root_models, gradloglikfuns)              # Delete This
+#         mapping, garbage_index = self._get_mapping()
+#         models = []
+#         self.parameter_names_with_index = {}
+#         for mdl, mdl_index in mapping:
+#             models.append(mdl)
+#             self.parameter_names_with_index[mdl.name] = mdl_index  # dict storing param names with index
+
+#         self.parameter_names = [model.name for model in models]  # store parameter names
+
+#         if kernel is None:
+#             kernel = DefaultKernel(models)
+
+#         self.kernel = kernel
+#         self.backend = backend
+#         self.rng = np.random.RandomState(seed)
+#         self.logger = logging.getLogger(__name__)
+
+#         # these are usually big tables, so we broadcast them to have them once
+#         # per executor instead of once per task
+#         self.accepted_parameters_manager = AcceptedParametersManager(self.model)            # The need for this is questionsable
+#         # this is used to handle the data for adapting the covariance:
+#         self.accepted_parameters_manager_adaptive_cov = AcceptedParametersManager(self.model)
+
+#         self.simulation_counter = 0
+
+#         self.dummy_backend = BackendDummy()
+
+#     def sample(self, observations, n_samples, n_samples_per_param=100, burnin=1000, 
+#                diffusion_factor=0.01, step_size=0.001, iniPoint=None, w_val = 3,
+#                bounds=None, speedup_dummy=True, n_groups_correlated_randomness=None, use_tqdm=True,
+#                journal_file=None, path_to_save_journal=None):
+#         """Samples from the posterior distribution of the model parameter given the observed
+#         data observations. The MCMC is run for burnin + n_samples steps, and n_samples_per_param are used at each step
+#         to estimate the approximate loglikelihood. The burnin steps are then discarded from the chain stored in the
+#         journal file.
+
+#         During burnin, the covariance matrix is adapted from the steps generated up to that point, in a way similar to
+#         what suggested in [1], after each adapt_proposal_cov_interval steps. Differently from the original algorithm in
+#         [1], here the proposal covariance matrix is fixed after the end of the burnin steps.
+
+#         In case the original parameter space is bounded (for instance with uniform prior on an interval), the MCMC can
+#         be optionally run on a transformed space. Therefore, the covariance matrix describes proposals on the
+#         transformed space; the acceptance rate then takes into account the Jacobian of the transformation. In order to
+#         use MCMC with transformed space, you need to specify lower and upper bounds in the corresponding parameters (see
+#         details in the description of `bounds`).
+
+#         The returned journal file contains also information on acceptance rates (in the configuration dictionary).
+
+
+#         Parameters
+#         ----------
+#         observations : list
+#             A list, containing lists describing the observed data sets; one for each model.
+#         n_samples : integer, optional
+#             number of samples to generate. The default value is 10000.
+#         n_samples_per_param : integer, optional
+#             number of data points in each simulated data set. The default value is 100.
+#         burnin : integer, optional
+#             Number of burnin steps to discard. Defaults to 1000.
+#         iniPoint : numpy.ndarray, optional
+#             parameter value from where the sampling starts. By default sampled from the prior. Not used if journal_file
+#             is passed.
+        
+#         bounds : dictionary, optional
+#             dictionary containing the lower and upper bound for the transformation to be applied to the parameters. The
+#             key of each entry is the name of the parameter as defined in the model, while the value if a tuple (or list)
+#             with `(lower_bound, upper_bound)` content. If the parameter is bounded on one side only, the other bound
+#             should be set to 'None'. If a parameter is not in this dictionary, no transformation is applied to it.
+#             If a parameter is bounded on two sides, the used transformation is based on the logit. If conversely it is
+#             lower bounded, we apply instead a log transformation. Notice that we do not implement yet the transformation
+#             for upper bounded variables. If no value is provided, the default value is None, which means no
+#             transformation at all is applied.
+#         speedup_dummy: boolean, optional.
+#             If set to True, the map function is not used to parallelize simulations (for the new parameter value) when
+#             the backend is Dummy. This can improve performance as it can exploit potential vectorization in the model.
+#             However, this breaks reproducibility when using, for instance, BackendMPI with respect to BackendDummy, due
+#             to the different way the random seeds are used when speedup_dummy is set to True. Please set this to False
+#             if you are interested in preserving reproducibility across MPI and Dummy backend. Defaults to True.
+#         n_groups_correlated_randomness: integer, optional
+#             The number of groups to use to correlate the randomness in the correlated pseudo-marginal MCMC scheme.
+#             Specifically, if provided, the n_samples_per_param simulations from the model are split in
+#             n_groups_correlated_randomness groups. At each MCMC step, the random variables used in simulating the model
+#             are the same as in the previous step for all n_samples_per_param simulations except for a single group,
+#             for which fresh random variables are used.
+#             In practice, this is done by storing the random seeds. This approach should reduce stickiness of the chain
+#             and was discussed in [2] for the Bayesian Synthetic Likelihood framework. Notice that, when
+#             n_groups_correlated_randomness > 0 and speedup_dummy is True, you obtain different results for different
+#             values of n_groups_correlated_randomness due to different ways of handling random seeds.
+#             When None, we do not keep track of the random seeds. Default value is None.
+#         use_tqdm : boolean, optional
+#             Whether using tqdm or not to display progress. Defaults to True.
+#         journal_file: str, optional
+#             Filename of a journal file to read an already saved journal file, from which the first iteration will start.
+#             That's the only information used (it does not use the previous covariance matrix).
+#             The default value is None.
+#         path_to_save_journal: str, optional
+#             If provided, save the journal at the provided path at the end of the inference routine.
+
+#         Returns
+#         -------
+#         abcpy.output.Journal
+#             A journal containing simulation results, metadata and optionally intermediate results.
+#         """
+
+#         if path_to_save_journal is not None:
+#             path_to_save_journal = path_to_save_journal if '.jnl' in path_to_save_journal else path_to_save_journal + '.jnl'
+
+#         accepted_parameters = []
+#         accepted_parameters_burnin = []
+#         if journal_file is None:
+#             journal = Journal(0)
+#             journal.configuration["type_model"] = [type(model).__name__ for model in self.model]
+#             journal.configuration["type_lhd_func"] = [type(likfun).__name__ for likfun in self.gradloglikfun.approx_lhds]
+#             journal.configuration["type_kernel_func"] = [type(kernel).__name__ for kernel in self.kernel.kernels] if \
+#                 isinstance(self.kernel, JointPerturbationKernel) else type(self.kernel)
+#             journal.configuration["n_samples"] = self.n_samples
+#             journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+#             journal.configuration["burnin"] = burnin
+#             journal.configuration["iniPoint"] = iniPoint
+#             journal.configuration["bounds"] = bounds
+#             journal.configuration["speedup_dummy"] = speedup_dummy
+#             journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+#             journal.configuration["use_tqdm"] = use_tqdm
+#             journal.configuration["acceptance_rates"] = []
+#             # Initialize chain: when not supplied, randomly draw it from prior distribution
+#             # It is an MCMC chain: weights are always 1; forget about them
+#             # accepted_parameter will keep track of the chain position
+#             if iniPoint is None:
+#                 self.sample_from_prior(rng=self.rng)
+#                 accepted_parameter = self.get_parameters()
+#                 print(str(accepted_parameter) + "  <---- init param")
+#             else:
+#                 accepted_parameter = iniPoint
+#                 if isinstance(accepted_parameter, np.ndarray) and len(accepted_parameter.shape) == 1 or isinstance(
+#                         accepted_parameter, list) and not hasattr(accepted_parameter[0], "__len__"):
+#                     # reshape whether we pass a 1d array or list.
+#                     accepted_parameter = [np.array([x]) for x in accepted_parameter]  # give correct shape for later
+#             if burnin == 0:
+#                 accepted_parameters_burnin.append(accepted_parameter)
+#             self.logger.info("Calculate approximate loglikelihood")
+#             # approx_log_likelihood_accepted_parameter = self._simulate_and_compute_log_lik(accepted_parameter)
+#             # update the number of simulations (this tracks the number of parameters for which simulations are done;
+#             # the actual number of simulations is this times n_samples_per_param))
+#             self.simulation_counter += 1
+#             self.acceptance_rate = 0
+#         else:
+#             # check the following:
+#             self.logger.info("Restarting from previous journal")
+#             journal = Journal.fromFile(journal_file)
+#             # this is used to compute the overall acceptance rate:
+#             accepted_parameter = journal.get_accepted_parameters(-1)[-1]  # go on from last MCMC step
+#             journal.configuration["n_samples"] += self.n_samples  # add the total number of samples
+#             journal.configuration["burnin"] = burnin
+#             if journal.configuration["n_samples_per_param"] != self.n_samples_per_param:
+#                 warnings.warn("You specified a different n_samples_per_param from the one used in the passed "
+#                                 "journal_file; the algorithm will still work fine.")
+#                 journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+#             journal.configuration["bounds"] = bounds  # overwrite
+#             journal.configuration["speedup_dummy"] = speedup_dummy
+#             journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+#             approx_log_likelihood_accepted_parameter = journal.final_step_loglik
+#             self.simulation_counter = journal.number_of_simulations[-1]  # update the number of simulations
+
+#         # main sgld algorithm
+#         self.observations = observations
+#         self.n = len(self.observations)
+#         self.diffusion_factor = diffusion_factor
+#         self.theta_dim = len(accepted_parameter)
+#         self.logger.info("Starting adSGLD")
+#         self.step_size = step_size
+#         # acceptedparameter is theta0
+#         self.T = 0
+#         self.xi = xi
+#         #self.p_var = np.random.randn(self.theta_dim)
+#         # current theta is accepted_parameter
+#         # current N is burnin + n_samples
+#         print(observations)
+#         true_value = str(np.sum(observations)/len(observations))
+#         true_mu = str(np.std(observations))
+
+#         for aStep in tqdm(range(burnin + n_samples), disable=not use_tqdm): 
+
+#             self.logger.debug("Step {} of SGLD algorithm".format(aStep))
+#             print("Step {} of SGLD algorithm".format(aStep))
+
+#             print(accepted_parameter)
+#             print(self.transform())
+#             print("True Value: " + true_value)
+#             print("True Sigma: " + true_mu)
+#             self.set_parameters(accepted_parameter)
+            
+#             # print(self.models[0].set_output_values(np.array(accepted_parameter)))
+#             # self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=[accepted_parameter])
+
+#             # current_parameter_grad_log_prior_pdf = self.grad_log_pdf_of_prior(self.model, accepted_parameter)
+
+#             self.simulated_values = self.gradsimulate(n_samples_per_param) # CHECK THISSSS
+#             # parameter_grad_scoring_rule_value = self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0]
+#             #print(" ####### ")
+            
+#             #print(" BELOW ")
+#             #print(parameter_grad_scoring_rule_value)
+#             #print(self.jacobian())
+#             parameter_grad_scoring_rule_value = np.dot(self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0], self.jacobian())
+#             print(str(parameter_grad_scoring_rule_value) + " grad_scoring_rule")
+#             #print(" ####### ")
+#             #print(type(parameter_grad_scoring_rule_value))
+#             estimate_grad_u_theta = - self.w*parameter_grad_scoring_rule_value 
+#             #print(str(accepted_parameter) + " < accepted_parameter previous")
+#             accepted_parameter = [param.item() for param in accepted_parameter]
+#             if not np.isnan(parameter_grad_scoring_rule_value).any():
+#                 accepted_parameter = accepted_parameter + 0.5*self.step_size*estimate_grad_u_theta + np.sqrt(self.step_size)*np.random.randn(self.theta_dim) #(self.p_var*self.step_size)[i] for i in range(0,self.theta_dim)]
+#             else:  
+#                 for x in range(0,100):
+#                     print(" NAN VALUE!")
+#             accepted_parameter = [np.array(param) for param in accepted_parameter]
+#             self.set_parameters(accepted_parameter)
+#             print(str(accepted_parameter) + str(" loop parameter"))
+#             print(str(self.current_input_values()) + str("backend parameter"))
+#             #print(str(accepted_parameter) + " < accepted_parameter updated")
+
+#             if aStep >= burnin:
+#                 accepted_parameters.append(accepted_parameter)
+#             else:
+#                 accepted_parameters_burnin.append(accepted_parameter)
+            
+
+
+#         mutotal = 0
+#         sigmatotal = 0
+#         for element in accepted_parameters:
+#             mutotal += element[0].item()
+#             sigmatotal += element[1].item()
+#         print(str(np.sum(mutotal)/len(accepted_parameters)) + " Average Mu Value")
+#         print(str(np.sum(sigmatotal)/len(accepted_parameters)) + " Average Sigma Value")
+#         self.logger.info("Saving results to output journal")
+#         self.acceptance_rate = 1.0
+#         self.logger.info("Saving results to output journal")
+#         self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=accepted_parameters)
+#         names_and_parameters = self._get_names_and_parameters()
+#         if journal_file is not None:  # concatenate chains
+#             journal.add_accepted_parameters(journal.get_accepted_parameters() + copy.deepcopy(accepted_parameters))
+#             names_and_parameters = [(names_and_parameters[i][0],
+#                                         journal.get_parameters()[names_and_parameters[i][0]] + names_and_parameters[i][1])
+#                                     for i in range(len(names_and_parameters))]
+#             journal.add_user_parameters(names_and_parameters)
+#         else:
+#             journal.add_accepted_parameters(copy.deepcopy(accepted_parameters))
+#             journal.add_user_parameters(names_and_parameters)
+#         journal.number_of_simulations.append(self.simulation_counter)
+#         journal.configuration["acceptance_rates"].append(self.acceptance_rate)
+#         journal.add_weights(np.ones((journal.configuration['n_samples'], 1)))
+#         # store the final loglik to be able to restart the journal correctly
+#         journal.final_step_loglik = approx_log_likelihood_accepted_parameter
+
+
+#         if path_to_save_journal is not None:  # save journal
+#             journal.save(path_to_save_journal)
+
+#         return journal
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# class basic_adSGLD_Transformedspace(BaseLikelihood, InferenceMethod):
+#     """
+#     Adaptive Stochastic Gradient Langevin Dyn working with the approximate likelihood functions Approx_likelihood
+
+#     Adaptive Stochastic Gradient Langevin Dynamics Working with the approximate gradient log likelikhood.
+
+#     Parameters
+#     ----------
+#     root_models : list
+#         A list of the Probabilistic models corresponding to the observed datasets
+#     gradloglikfuns : list of abcpy.approx_lhd.Approx_likelihood
+#         List of Approx_loglikelihood object defining the approximated gradloglikelihood to be used; one for each model.
+#     backend : abcpy.backends.Backend
+#         Backend object defining the backend to be used.
+#     #kernel : abcpy.perturbationkernel.PerturbationKernel, optional
+#     #    PerturbationKernel object defining the perturbation kernel needed for the sampling. If not provided, the
+#     #    DefaultKernel is used.
+#     seed : integer, optional
+#         Optional initial seed for the random number generator. The default value is generated randomly.
+
+#     """
+
+#     model = None
+#     gradloglikfun = None
+#     likfun = None     # Here for abstract class instatiation ( Remove (w class) or rewrite abstract for gradloglikfun)
+#     kernel = None
+#     rng = None
+
+#     n_samples = None
+#     n_samples_per_param = None
+
+#     backend = None
+
+
+#     def __init__(self, root_models, gradloglikfuns, backend, kernel=None, seed=None):
+#         self.model = root_models
+#         # We define the joint Sum of Loglikelihood functions using all the loglikelihoods for each individual models
+#         self.gradloglikfun =  SumCombination(root_models, gradloglikfuns)   # Gradloglikfuns here is being initialised as [EnergyScore(stat_calc, self.model, 2)]
+#         # self.likfun = SumCombination(root_models, gradloglikfuns)              # Delete This
+#         mapping, garbage_index = self._get_mapping()
+#         models = []
+#         self.parameter_names_with_index = {}
+#         for mdl, mdl_index in mapping:
+#             models.append(mdl)
+#             self.parameter_names_with_index[mdl.name] = mdl_index  # dict storing param names with index
+
+#         self.parameter_names = [model.name for model in models]  # store parameter names
+
+#         if kernel is None:
+#             kernel = DefaultKernel(models)
+
+#         self.kernel = kernel
+#         self.backend = backend
+#         self.rng = np.random.RandomState(seed)
+#         self.logger = logging.getLogger(__name__)
+
+#         # these are usually big tables, so we broadcast them to have them once
+#         # per executor instead of once per task
+#         self.accepted_parameters_manager = AcceptedParametersManager(self.model)            # The need for this is questionsable
+#         # this is used to handle the data for adapting the covariance:
+#         self.accepted_parameters_manager_adaptive_cov = AcceptedParametersManager(self.model)
+
+#         self.simulation_counter = 0
+
+#         self.dummy_backend = BackendDummy()
+
+#     def sample(self, observations, n_samples, n_samples_per_param=100, burnin=1000, 
+#                diffusion_factor=0.01, step_size=0.001, iniPoint=None, w_val = 3,
+#                bounds=None, speedup_dummy=True, n_groups_correlated_randomness=None, use_tqdm=True,
+#                journal_file=None, path_to_save_journal=None):
+#         """Samples from the posterior distribution of the model parameter given the observed
+#         data observations. The MCMC is run for burnin + n_samples steps, and n_samples_per_param are used at each step
+#         to estimate the approximate loglikelihood. The burnin steps are then discarded from the chain stored in the
+#         journal file.
+
+#         During burnin, the covariance matrix is adapted from the steps generated up to that point, in a way similar to
+#         what suggested in [1], after each adapt_proposal_cov_interval steps. Differently from the original algorithm in
+#         [1], here the proposal covariance matrix is fixed after the end of the burnin steps.
+
+#         In case the original parameter space is bounded (for instance with uniform prior on an interval), the MCMC can
+#         be optionally run on a transformed space. Therefore, the covariance matrix describes proposals on the
+#         transformed space; the acceptance rate then takes into account the Jacobian of the transformation. In order to
+#         use MCMC with transformed space, you need to specify lower and upper bounds in the corresponding parameters (see
+#         details in the description of `bounds`).
+
+#         The returned journal file contains also information on acceptance rates (in the configuration dictionary).
+
+
+#         Parameters
+#         ----------
+#         observations : list
+#             A list, containing lists describing the observed data sets; one for each model.
+#         n_samples : integer, optional
+#             number of samples to generate. The default value is 10000.
+#         n_samples_per_param : integer, optional
+#             number of data points in each simulated data set. The default value is 100.
+#         burnin : integer, optional
+#             Number of burnin steps to discard. Defaults to 1000.
+#         iniPoint : numpy.ndarray, optional
+#             parameter value from where the sampling starts. By default sampled from the prior. Not used if journal_file
+#             is passed.
+        
+#         bounds : dictionary, optional
+#             dictionary containing the lower and upper bound for the transformation to be applied to the parameters. The
+#             key of each entry is the name of the parameter as defined in the model, while the value if a tuple (or list)
+#             with `(lower_bound, upper_bound)` content. If the parameter is bounded on one side only, the other bound
+#             should be set to 'None'. If a parameter is not in this dictionary, no transformation is applied to it.
+#             If a parameter is bounded on two sides, the used transformation is based on the logit. If conversely it is
+#             lower bounded, we apply instead a log transformation. Notice that we do not implement yet the transformation
+#             for upper bounded variables. If no value is provided, the default value is None, which means no
+#             transformation at all is applied.
+#         speedup_dummy: boolean, optional.
+#             If set to True, the map function is not used to parallelize simulations (for the new parameter value) when
+#             the backend is Dummy. This can improve performance as it can exploit potential vectorization in the model.
+#             However, this breaks reproducibility when using, for instance, BackendMPI with respect to BackendDummy, due
+#             to the different way the random seeds are used when speedup_dummy is set to True. Please set this to False
+#             if you are interested in preserving reproducibility across MPI and Dummy backend. Defaults to True.
+#         n_groups_correlated_randomness: integer, optional
+#             The number of groups to use to correlate the randomness in the correlated pseudo-marginal MCMC scheme.
+#             Specifically, if provided, the n_samples_per_param simulations from the model are split in
+#             n_groups_correlated_randomness groups. At each MCMC step, the random variables used in simulating the model
+#             are the same as in the previous step for all n_samples_per_param simulations except for a single group,
+#             for which fresh random variables are used.
+#             In practice, this is done by storing the random seeds. This approach should reduce stickiness of the chain
+#             and was discussed in [2] for the Bayesian Synthetic Likelihood framework. Notice that, when
+#             n_groups_correlated_randomness > 0 and speedup_dummy is True, you obtain different results for different
+#             values of n_groups_correlated_randomness due to different ways of handling random seeds.
+#             When None, we do not keep track of the random seeds. Default value is None.
+#         use_tqdm : boolean, optional
+#             Whether using tqdm or not to display progress. Defaults to True.
+#         journal_file: str, optional
+#             Filename of a journal file to read an already saved journal file, from which the first iteration will start.
+#             That's the only information used (it does not use the previous covariance matrix).
+#             The default value is None.
+#         path_to_save_journal: str, optional
+#             If provided, save the journal at the provided path at the end of the inference routine.
+
+#         Returns
+#         -------
+#         abcpy.output.Journal
+#             A journal containing simulation results, metadata and optionally intermediate results.
+#         """
+
+#         if path_to_save_journal is not None:
+#             path_to_save_journal = path_to_save_journal if '.jnl' in path_to_save_journal else path_to_save_journal + '.jnl'
+
+#         accepted_parameters = []
+#         accepted_parameters_burnin = []
+#         if journal_file is None:
+#             journal = Journal(0)
+#             journal.configuration["type_model"] = [type(model).__name__ for model in self.model]
+#             journal.configuration["type_lhd_func"] = [type(likfun).__name__ for likfun in self.gradloglikfun.approx_lhds]
+#             journal.configuration["type_kernel_func"] = [type(kernel).__name__ for kernel in self.kernel.kernels] if \
+#                 isinstance(self.kernel, JointPerturbationKernel) else type(self.kernel)
+#             journal.configuration["n_samples"] = self.n_samples
+#             journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+#             journal.configuration["burnin"] = burnin
+#             journal.configuration["iniPoint"] = iniPoint
+#             journal.configuration["bounds"] = bounds
+#             journal.configuration["speedup_dummy"] = speedup_dummy
+#             journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+#             journal.configuration["use_tqdm"] = use_tqdm
+#             journal.configuration["acceptance_rates"] = []
+#             # Initialize chain: when not supplied, randomly draw it from prior distribution
+#             # It is an MCMC chain: weights are always 1; forget about them
+#             # accepted_parameter will keep track of the chain position
+#             if iniPoint is None:
+#                 self.sample_from_prior(rng=self.rng)
+#                 accepted_parameter = self.get_parameters()
+#                 print(str(accepted_parameter) + "  <---- init param")
+#             else:
+#                 accepted_parameter = iniPoint
+#                 if isinstance(accepted_parameter, np.ndarray) and len(accepted_parameter.shape) == 1 or isinstance(
+#                         accepted_parameter, list) and not hasattr(accepted_parameter[0], "__len__"):
+#                     # reshape whether we pass a 1d array or list.
+#                     accepted_parameter = [np.array([x]) for x in accepted_parameter]  # give correct shape for later
+#             if burnin == 0:
+#                 accepted_parameters_burnin.append(accepted_parameter)
+#             self.logger.info("Calculate approximate loglikelihood")
+#             # approx_log_likelihood_accepted_parameter = self._simulate_and_compute_log_lik(accepted_parameter)
+#             # update the number of simulations (this tracks the number of parameters for which simulations are done;
+#             # the actual number of simulations is this times n_samples_per_param))
+#             self.simulation_counter += 1
+#             self.acceptance_rate = 0
+#         else:
+#             # check the following:
+#             self.logger.info("Restarting from previous journal")
+#             journal = Journal.fromFile(journal_file)
+#             # this is used to compute the overall acceptance rate:
+#             accepted_parameter = journal.get_accepted_parameters(-1)[-1]  # go on from last MCMC step
+#             journal.configuration["n_samples"] += self.n_samples  # add the total number of samples
+#             journal.configuration["burnin"] = burnin
+#             if journal.configuration["n_samples_per_param"] != self.n_samples_per_param:
+#                 warnings.warn("You specified a different n_samples_per_param from the one used in the passed "
+#                                 "journal_file; the algorithm will still work fine.")
+#                 journal.configuration["n_samples_per_param"] = self.n_samples_per_param
+#             journal.configuration["bounds"] = bounds  # overwrite
+#             journal.configuration["speedup_dummy"] = speedup_dummy
+#             journal.configuration["n_groups_correlated_randomness"] = n_groups_correlated_randomness
+#             approx_log_likelihood_accepted_parameter = journal.final_step_loglik
+#             self.simulation_counter = journal.number_of_simulations[-1]  # update the number of simulations
+
+#         # main sgld algorithm
+#         self.observations = observations
+#         self.n = len(self.observations)
+#         self.diffusion_factor = diffusion_factor
+#         self.theta_dim = len(accepted_parameter)
+#         self.logger.info("Starting adSGLD")
+#         self.step_size = step_size
+#         self.xi = self.diffusion_factor
+#         self.w = w_val
+#         self.p_var = np.random.randn(self.theta_dim)
+#         # current theta is accepted_parameter
+#         # current N is burnin + n_samples
+
+#         true_value = str(np.sum(observations)/40)
+#         true_mu = str(np.std(observations))
+
+#         for aStep in tqdm(range(burnin + n_samples), disable=not use_tqdm): 
+
+#             self.logger.debug("Step {} of SGLD algorithm".format(aStep))
+#             print("Step {} of SGLD algorithm".format(aStep))
+
+#             print(accepted_parameter)
+#             print(self.transform())
+#             print("True Value: " + true_value)
+#             print("True Sigma: " + true_mu)
+#             self.set_parameters(accepted_parameter)
+            
+#             # print(self.models[0].set_output_values(np.array(accepted_parameter)))
+#             # self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=[accepted_parameter])
+
+#             # current_parameter_grad_log_prior_pdf = self.grad_log_pdf_of_prior(self.model, accepted_parameter)
+
+#             self.simulated_values = self.gradsimulate(n_samples_per_param) # CHECK THISSSS
+#             # parameter_grad_scoring_rule_value = self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0]
+#             #print(" ####### ")
+            
+#             #print(" BELOW ")
+#             #print(parameter_grad_scoring_rule_value)
+#             #print(self.jacobian())
+#             parameter_grad_scoring_rule_value = np.dot(self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0], self.jacobian())
+#             print(str(parameter_grad_scoring_rule_value) + " grad_scoring_rule")
+#             #print(" ####### ")
+#             #print(type(parameter_grad_scoring_rule_value))
+#             estimate_grad_u_theta = - self.w*parameter_grad_scoring_rule_value 
+#             #print(str(accepted_parameter) + " < accepted_parameter previous")
+#             accepted_parameter = [param.item() for param in accepted_parameter]
+#             if not np.isnan(parameter_grad_scoring_rule_value).any():
+#                 accepted_parameter = accepted_parameter + 0.5*self.step_size*estimate_grad_u_theta + np.sqrt(self.step_size)*np.random.randn(self.theta_dim) #(self.p_var*self.step_size)[i] for i in range(0,self.theta_dim)]
+#             else:  
+#                 for x in range(0,100):
+#                     print(" NAN VALUE!")
+#             accepted_parameter = [np.array(param) for param in accepted_parameter]
+#             self.set_parameters(accepted_parameter)
+#             print(str(accepted_parameter) + str(" loop parameter"))
+#             print(str(self.current_input_values()) + str("backend parameter"))
+#             #print(str(accepted_parameter) + " < accepted_parameter updated")
+
+#             if aStep >= burnin:
+#                 accepted_parameters.append(accepted_parameter)
+#             else:
+#                 accepted_parameters_burnin.append(accepted_parameter)
+            
+
+
+#         mutotal = 0
+#         sigmatotal = 0
+#         for element in accepted_parameters:
+#             mutotal += element[0].item()
+#             sigmatotal += element[1].item()
+#         print(str(np.sum(mutotal)/len(accepted_parameters)) + " Average Mu Value")
+#         print(str(np.sum(sigmatotal)/len(accepted_parameters)) + " Average Sigma Value")
+#         self.logger.info("Saving results to output journal")
+#         self.acceptance_rate /= journal.configuration["n_samples"]
+#         self.logger.info("Saving results to output journal")
+#         self.accepted_parameters_manager.update_broadcast(self.dummy_backend, accepted_parameters=accepted_parameters)
+#         names_and_parameters = self._get_names_and_parameters()
+#         if journal_file is not None:  # concatenate chains
+#             journal.add_accepted_parameters(journal.get_accepted_parameters() + copy.deepcopy(accepted_parameters))
+#             names_and_parameters = [(names_and_parameters[i][0],
+#                                         journal.get_parameters()[names_and_parameters[i][0]] + names_and_parameters[i][1])
+#                                     for i in range(len(names_and_parameters))]
+#             journal.add_user_parameters(names_and_parameters)
+#         else:
+#             journal.add_accepted_parameters(copy.deepcopy(accepted_parameters))
+#             journal.add_user_parameters(names_and_parameters)
+#         journal.number_of_simulations.append(self.simulation_counter)
+#         journal.configuration["acceptance_rates"].append(self.acceptance_rate)
+#         journal.add_weights(np.ones((journal.configuration['n_samples'], 1)))
+#         # store the final loglik to be able to restart the journal correctly
+#         journal.final_step_loglik = approx_log_likelihood_accepted_parameter
+
+
+#         if path_to_save_journal is not None:  # save journal
+#             journal.save(path_to_save_journal)
+
+#         return journal
 
 

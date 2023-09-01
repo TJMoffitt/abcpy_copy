@@ -4,11 +4,11 @@ import numpy as np
 
 from abcpy.approx_lhd import SynLikelihood, EnergyScore
 from abcpy.backends import BackendDummy
-from abcpy.continuousmodels import Normal
+from abcpy.continuousmodels import Normal, LogNormal
 from abcpy.continuousmodels import Uniform
 from abcpy.distances import Euclidean, MMD
 from abcpy.inferences import DrawFromPrior, RejectionABC, PMC, PMCABC, SABC, ABCsubsim, SMCABC, APMCABC, RSMCABC, \
-    MCMCMetropoliHastings, adSGLD, basic_adSGLD
+    MCMCMetropoliHastings, adSGLD, adSGLD_transformedspace, Testing_Grad_Prior
 from abcpy.statistics import Identity
 from Gaussian_model import Gaussian
 
@@ -1252,8 +1252,17 @@ class adsgldTests():
         dummy = BackendDummy()
 
         # define a uniform prior distribution
-        mu = Uniform([[10.0], [20.0]], name='mu')
-        sigma = Uniform([[1.0], [2.0]], name='sigma')
+        # mu1 = Normal([100, 0.1], name='mu1')
+        # mu2 = LogNormal([0.3,0.5], name='mu2')
+
+        mu = Normal([40, 2], name='mu')
+        sigma = LogNormal([1,1.10], name='sigma')
+
+        #mu = Normal([10, 1], name='mu')
+        #sigma = LogNormal([6,1.5], name='sigma')
+
+        #mu = Normal([22, 2], name='mu')
+       # sigma = Normal([3,1], name='sigma')
         # define a Gaussian model
         self.model = Gaussian([mu, sigma])
 
@@ -1266,26 +1275,35 @@ class adsgldTests():
         #dist_calc = Energy
 
         # create fake observed data
-        self.y_obs = self.model.forward_simulate([15,1], 40, rng=np.random.RandomState(8))  # Correct
-        print(np.sum(self.y_obs)/40)
+        self.y_obs = self.model.forward_simulate([50,1], 20, rng=np.random.RandomState(8))  # Correct
+        print(np.sum(self.y_obs)/30)
         #print(self.y_obs)
         #print("hello world")
         # for correct seeding define 2 samplers
-        self.sampler = basic_adSGLD([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
+        #self.sampler = Testing_Grad_Prior([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
+        self.sampler = adSGLD_transformedspace([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
 
-        self.sampler2 = basic_adSGLD([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
+
+        #self.sampler2 = Testing_Grad_Prior([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
 
     def test_sample_n_samples(self):
         # use the rejection sampling scheme
-        journal = self.sampler.sample([self.y_obs], 100, 40, 8000, step_size=0.0001, w_val = 10, path_to_save_journal="tmp.jnl")
+        # journal = self.sampler.sample([self.y_obs], 100, 20, 400, step_size=0.0003, w_val = 40, path_to_save_journal="tmp.jnl")
+        #journal = self.sampler.sample([self.y_obs],['mu','sigma'], 100, 100, 300, step_size=0.0003, w_val = 2, path_to_save_journal="tmp.jnl") 
+        journal = self.sampler.sample([self.y_obs], 100, n_samples_per_param=20, burnin=900, step_size=0.0003, w_val = 30, path_to_save_journal="tmp.jnl") 
         mu_sample = np.array(journal.get_parameters()['mu'])
         sigma_sample = np.array(journal.get_parameters()['sigma'])
-
+        print("a")
+        print(journal.plot_posterior_distr(path_to_save="posterior.png"))
+        print(journal.traceplot())
+        print(" Completed")
+        print(mu_sample)
+        print(sigma_sample)
         # test shape of samples
-        mu_shape, sigma_shape = (len(mu_sample), mu_sample[0].shape[1]), \
-                                (len(sigma_sample), sigma_sample[0].shape[1])
-        self.assertEqual(mu_shape, (10, 1))
-        self.assertEqual(sigma_shape, (10, 1))
+        mu_shape, sigma_shape = (len(mu_sample), mu_sample[0].shape[0]), \
+                                (len(sigma_sample), sigma_sample[0].shape[0])
+        self.assertEqual(mu_shape, (100, 1))
+        self.assertEqual(sigma_shape, (100, 1))
 
         # Compute posterior mean
         self.assertAlmostEqual(np.average(mu_sample), 1.223012836345375)

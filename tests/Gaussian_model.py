@@ -22,6 +22,11 @@ class Gaussian(ProbabilisticModel, Continuous):
         input_connector = InputConnector.from_list(parameters)
         super().__init__(input_connector, name)
         self.ordered_transforms = [False, torch.exp]
+        self.ordered_inverse_transforms = [False, torch.log]
+    
+    #def set_base_positions(self,base_positions):
+    #    self.base_positions = base_positions
+    #    print(self.base_positions)
 
     def _check_input(self, input_values):
         # Check whether input has correct type or format
@@ -140,6 +145,18 @@ class Gaussian(ProbabilisticModel, Continuous):
         arg = torch.tensor(variables, dtype=torch.float)#, requires_grad = True)
         return arg
     
+    # def transform_variables(self, variables):
+    #     # Takes as input: [np.array(theta1), ...... , np.array(theta_n)]
+    #     # returns : list of transformed variables in correct space : [T(theta1), ..... , T(thetan)]
+    #     variables = self.to_tensor(variables)
+    #     transformed = variables
+    #     for index in range(0,len(variables)):
+    #         if self.ordered_transforms[index]:
+    #             transformed[index] = self.ordered_transforms[index](variables[index])
+    #     return transformed.tolist()
+    def transform(self, variables):
+        return transform_variables(variables)
+    
     def transform_variables(self, variables):
         # Takes as input: [np.array(theta1), ...... , np.array(theta_n)]
         # returns : list of transformed variables in correct space : [T(theta1), ..... , T(thetan)]
@@ -148,6 +165,14 @@ class Gaussian(ProbabilisticModel, Continuous):
         for index in range(0,len(variables)):
             if self.ordered_transforms[index]:
                 transformed[index] = self.ordered_transforms[index](variables[index])
+        return transformed.tolist()
+    
+    def inverse_transform(self, variables):
+        variables = self.to_tensor(variables)
+        transformed = variables
+        for index in range(0,len(variables)):
+            if self.ordered_transforms[index]:
+                transformed[index] = self.ordered_inverse_transforms[index](variables[index])
         return transformed.tolist()
 
     def transform_jacobian(self, variables): # variables is probably not needed here
@@ -165,6 +190,15 @@ class Gaussian(ProbabilisticModel, Continuous):
             else:
                 array.append(1)
         return np.diag(array)
+
+    def jacobian_list(self):
+        return self.ordered_transforms
+    
+    def transform_list(self):
+        return self.ordered_transforms
+
+    def inverse_transform_list(self):
+        return self.ordered_inverse_transforms
   
 
 
