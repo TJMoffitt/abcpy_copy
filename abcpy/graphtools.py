@@ -135,7 +135,7 @@ class GraphTools:
         list
             The resulting pdf,as well as the next index to be considered in the parameters list.
         """
-        # At the beginning of calculation, obtain the mapping
+        # At the beginning of calculation, obtain the mapping#
         if is_root:
             mapping, garbage_index = self._get_mapping()
 
@@ -188,31 +188,131 @@ class GraphTools:
 
         return result
     
-    def grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
-        """
-        Calculates the gradient of the joint log probability density function of the prior of the specified models at the given parameter values.
-        Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
+    # def pdf_of_prior_transformed(self, models, parameters, mapping=None, is_root=True):
+    #     """
+    #     Calculates the joint probability density function of the prior of the specified models at the given parameter values.
+    #     Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
 
-        Parameters
-        ----------
-        models: list of abcpy.ProbabilisticModel objects
-            Defines the models for which the pdf of their prior should be evaluated
-        parameters: python list
-            The parameters at which the pdf should be evaluated
-        mapping: list of tuples
-            Defines the mapping of probabilistic models and index in a parameter list.
-        is_root: boolean
-            A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
+    #     Parameters
+    #     ----------
+    #     models: list of abcpy.ProbabilisticModel objects
+    #         Defines the models for which the pdf of their prior should be evaluated
+    #     parameters: python list
+    #         The parameters at which the pdf should be evaluated
+    #     mapping: list of tuples
+    #         Defines the mapping of probabilistic models and index in a parameter list.
+    #     is_root: boolean
+    #         A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
 
-        Returns
-        -------
-        list
-            The resulting pdf,as well as the next index to be considered in the parameters list.
-        """
-        self.set_parameters(parameters)
-        print(" TESTING ")
-        result = self._recursion_grad_log_pdf_of_prior(models, parameters, mapping, is_root)
-        return result
+    #     Returns
+    #     -------
+    #     list
+    #         The resulting pdf,as well as the next index to be considered in the parameters list.
+    #     """
+    #     self.set_parameters(parameters)
+    #     parameters = self.apply_full_transform(parameters)
+    #     result = self._recursion_pdf_of_prior_transformed(models, parameters, mapping, is_root)
+    #     return result
+
+    # def _recursion_pdf_of_prior_transformed(self, models, parameters, mapping=None, is_root=True):
+    #     """
+    #     Calculates the joint probability density function of the prior of the specified models at the given parameter values.
+    #     Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
+
+    #     Parameters
+    #     ----------
+    #     models: list of abcpy.ProbabilisticModel objects
+    #         Defines the models for which the pdf of their prior should be evaluated
+    #     parameters: python list
+    #         The parameters at which the pdf should be evaluated
+    #     mapping: list of tuples
+    #         Defines the mapping of probabilistic models and index in a parameter list.
+    #     is_root: boolean
+    #         A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
+
+    #     Returns
+    #     -------
+    #     list
+    #         The resulting pdf,as well as the next index to be considered in the parameters list.
+    #     """
+    #     # At the beginning of calculation, obtain the mapping#
+    #     if is_root:
+    #         mapping, garbage_index = self._get_mapping()
+
+    #     # The pdf of each root model is first calculated separately
+    #     result = [1.] * len(models)
+
+    #     for i, model in enumerate(models):
+    #         # If the model is not a root model, the pdf of this model, given the prior, should be calculated
+    #         if not is_root and not (isinstance(model, ModelResultingFromOperation)):
+    #             # Define a helper list which will contain the parameters relevant to the current model for pdf calculation
+    #             relevant_parameters = []
+
+    #             for mapped_model, model_index in mapping:
+    #                 if mapped_model == model:
+    #                     parameter_index = model_index
+    #                     # for j in range(model.get_output_dimension()):
+    #                     relevant_parameters.append(parameters[parameter_index])
+    #                     # parameter_index+=1
+    #                     break
+    #             if len(relevant_parameters) == 1:
+    #                 relevant_parameters = relevant_parameters[0]
+    #             else:
+    #                 relevant_parameters = np.array(relevant_parameters)
+    #         else:
+    #             relevant_parameters = []
+
+    #         # Mark whether the parents of each model have been visited before for this model to avoid repeated calculation.
+    #         visited_parents = [False for j in range(len(model.get_input_models()))]
+    #         # For each parent, the pdf of this parent has to be calculated as well.
+    #         for parent_index, parent in enumerate(model.get_input_models()):
+    #             # Only calculate the pdf if the parent has never been visited for this model
+    #             if not (visited_parents[parent_index]):
+    #                 pdf = self._recursion_pdf_of_prior_transformed([parent], parameters, mapping=mapping, is_root=False)
+    #                 input_models = model.get_input_models()
+    #                 for j in range(len(input_models)):
+    #                     if input_models[j][0] == parent:
+    #                         visited_parents[j] = True
+    #                 result[i] *= pdf
+    #         if not is_root:
+    #             if model.calculated_pdf is None:
+    #                 result[i] *= model.pdf(self.apply_local_transform(model, model.get_input_values()), relevant_parameters)
+    #             else:
+    #                 result[i] *= 1
+
+    #                 # Multiply the pdfs of all roots together to give an overall pdf.
+    #     temporary_result = result
+    #     result = 1.
+    #     for individual_result in temporary_result:
+    #         result *= individual_result
+
+    #     return result
+    
+    # def grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
+    #     """
+    #     Calculates the gradient of the joint log probability density function of the prior of the specified models at the given parameter values.
+    #     Commonly used to check whether new parameters are valid given the prior, as well as to calculate acceptance probabilities.
+
+    #     Parameters
+    #     ----------
+    #     models: list of abcpy.ProbabilisticModel objects
+    #         Defines the models for which the pdf of their prior should be evaluated
+    #     parameters: python list
+    #         The parameters at which the pdf should be evaluated
+    #     mapping: list of tuples
+    #         Defines the mapping of probabilistic models and index in a parameter list.
+    #     is_root: boolean
+    #         A flag specifying whether the provided models are the root models. This is to ensure that the pdf is calculated correctly.
+
+    #     Returns
+    #     -------
+    #     list
+    #         The resulting pdf,as well as the next index to be considered in the parameters list.
+    #     """
+    #     self.set_parameters(parameters)
+    #     print(" TESTING ")
+    #     result = self._recursion_grad_log_pdf_of_prior(models, parameters, mapping, is_root)
+    #     return result
 
     # def _recursion_grad_log_pdf_of_prior(self, models, parameters, mapping=None, is_root=True):
     #     """
@@ -464,16 +564,19 @@ class GraphTools:
             return grad_log_prior_array
 
     def apply_local_transform(self,element,values):
-
         output_array = [0.0] * len(values)
-        transforms = element.transform_list()
+        try:
+            transforms = element.transform_list()
+        except:
+            return values
         inputmodels = element.get_input_models()
         for index, element in enumerate(values):
             transform = transforms[index]
+            output_array[index] = element
             if transform != False and ("Hyperparameter" not in str(inputmodels[index])):
                 output_array[index] = transforms[index](torch.tensor(element)).item()
-            else:
-                output_array[index] = element
+            #else:
+            #    output_array[index] = element
 
         return output_array
     # def _recursion_grad_log_pdf_of_prior(self, node, parameters, mapping=None, is_root=True):
@@ -718,14 +821,16 @@ class GraphTools:
         """
         result = []
         for model in self.model:
-            parameters_compatible = model._check_input(model.get_input_values())
+            try:
+                modelparams = model.transform_variables(model.get_input_values())
+            except:
+                modelparams = model.get_input_values()
+            parameters_compatible = model._check_input(modelparams) # Changed to model.transform_variables(model.get_input_values()) from model.get_input_values() 
             if parameters_compatible:
                 if npc is not None and npc.communicator().Get_size() > 1:
-                    simulation_result = npc.run_nested(model.forward_simulate, model.get_input_values(),
+                    simulation_result = npc.run_nested(model.forward_simulate, modelparams,
                                                        n_samples_per_param, rng=rng)
                 else:
-                    # print(model.get_input_values())
-                    modelparams = self.transform()[0]
                     simulation_result = model.forward_simulate(modelparams, n_samples_per_param, rng=rng)
                 result.append(simulation_result)
             else:
@@ -749,18 +854,16 @@ class GraphTools:
         result = []
         for model in self.model:
             #print(model.get_input_values())
-            parameters_compatible = model._check_input(model.transform_variables(model.get_input_values()))
+            try:
+                modelparams = model.transform_variables(model.get_input_values()) #self.transform()[0]
+            except:
+                modelparams = model.get_input_values()
+            parameters_compatible = model._check_input(modelparams)
             if parameters_compatible:
                 if npc is not None and npc.communicator().Get_size() > 1:
-                    simulation_result = npc.run_nested(model.grad_forward_simulate, model.transform_variables(model.get_input_values()),
+                    simulation_result = npc.run_nested(model.grad_forward_simulate, modelparams,
                                                        n_samples_per_param, rng=rng)
                 else:
-
-                    #print(model.get_input_values())
-                    #print(model.get_input_values())
-
-                    modelparams = model.transform_variables(model.get_input_values()) #self.transform()[0]
-                    #print(modelparams)
                     simulation_result = model.grad_forward_simulate(modelparams, n_samples_per_param, rng=rng)
 
                 result.append(simulation_result)

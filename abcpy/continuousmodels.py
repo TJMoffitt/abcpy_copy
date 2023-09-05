@@ -36,6 +36,10 @@ class Uniform(ProbabilisticModel, Continuous):
         input_parameters = InputConnector.from_list(parameters)
         super(Uniform, self).__init__(input_parameters, name)
         self.visited = False
+        a = parameters[0]
+        b = parameters[1]
+        self.logit_a_b = [lambda x: a[n] + (b[n]-a[n])*(1-torch.exp(-x))**-1 for n in range(0,len(a))]
+        self.inverse_logit_a_b = [lambda x: -torch.log((b[n] - a[n])/(x - a[n]) -1) for n in range(0,len(a))]
 
     def _check_input(self, input_values):
         """
@@ -120,8 +124,14 @@ class Uniform(ProbabilisticModel, Continuous):
     
     def gradlogpdf(self, input_values, x):
         # we know that log(pdf(x)) is the same for all values [a,b] and 0 for [-inf,a]U[b,inf], hence grad is 0 wrt x [-inf,inf] and undef at {a,b} (continuous so never sampled)
+        
         return 0   
 
+    def inverse_transform_list(self):
+        return [False, False]
+    
+    def transform_list(self):
+        return [False, False]
 
 class Normal(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='Normal'):
@@ -223,9 +233,6 @@ class Normal(ProbabilisticModel, Continuous):
         #loglikleyhood = -n*ln(sigma) - (n/2)*ln(2*math.pi) - (1/(2*sigma*sigma))*np.sum((x-mu)**2)
         mu = input_values[0]
         sigma = input_values[1]
-        print(str(mu) + str(" < mu normal"))
-        print(str(sigma) + str(" < sigma normal"))
-        print(str(x) + str(" < x normal "))
         gradloglikleyhood = - (1/(sigma**2))*np.sum(x-mu)
         return gradloglikleyhood 
 
@@ -354,12 +361,17 @@ class StudentT(ProbabilisticModel, Continuous):
         #sigma = input_values[1]
         #gradloglikleyhood = (1/(sigma**2))*np.sum(x-mu)
         #return gradloglikleyhood 
-        values = transformations()
+        #values = transformations()
         t = input_values[0]
         v = input_values[1]
         gradlogpdf = -t*(v+1)*(1/(v+t**2))
         return gradlogpdf
+
+    def inverse_transform_list(self):
+        return [False, torch.log]
     
+    def transform_list(self):
+        return [False, torch.exp]
 
 
     
@@ -497,6 +509,12 @@ class MultivariateNormal(ProbabilisticModel, Continuous):
         covinv = np.linalg.inv(cov)
         deviation = x - mean
         return -np.dot(covinv, deviation) 
+    
+    def inverse_transform_list(self):           # For our algorithms it is only possible to use multinormal with fixed covariance.
+        return [False] * self._dimension
+    
+    def transform_list(self):               # For our algorithms it is only possible to use multinormal with fixed covariance.
+        return [False] * self._dimension
 
 class MultiStudentT(ProbabilisticModel, Continuous):
     def __init__(self, parameters, name='MultiStudentT'):
@@ -660,7 +678,11 @@ class MultiStudentT(ProbabilisticModel, Continuous):
         squareadj_deviation = np.dot(np.atleast2d(deviation).T, covadj_deviation)
         return -(df + p)*(covadj_deviation/(df + squareadj_deviation))
         
-        
+    def inverse_transform_list(self):           # For our algorithms it is only possible to use multinormal with fixed covariance.
+        return [False] * self._dimension
+    
+    def transform_list(self):               # For our algorithms it is only possible to use multinormal with fixed covariance.
+        return [False] * self._dimension   
 
 
 class LogNormal(ProbabilisticModel, Continuous):
@@ -762,9 +784,6 @@ class LogNormal(ProbabilisticModel, Continuous):
     def gradlogpdf(self, input_values, x):
         mu = input_values[0]
         sigma = input_values[1]
-        print(str(mu) + str(" < mu"))
-        print(str(sigma) + str(" < sigma"))
-        print(str(x) + str(" < x"))
         return (-(1/x) - (np.log(x) - mu)/(x*(sigma**2))).item()
 
     def jacobian_list(self):
@@ -877,3 +896,9 @@ class Exponential(ProbabilisticModel, Continuous):
     def gradlogpdf(self, input_values, x):
         rate = input_values[0]
         return -rate
+
+    def inverse_transform_list(self):
+        return [torch.log]
+    
+    def transform_list(self):
+        return [torch.exp]
