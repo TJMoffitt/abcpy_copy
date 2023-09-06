@@ -209,6 +209,100 @@ class CheckParametersBeforeSamplingTests(unittest.TestCase):
         self.assertFalse(EXP._check_input([-3]))
         self.assertFalse(EXP._check_input([-3, 1]))
 
+class TransformTests(unittest.TestCase):
+    """Tests whether the dimensions of all continuous models are defined in the correct way."""
+
+    def test_Uniform(self):
+        U = Uniform([[0, 1], [1, 2]])
+        self.assertTrue(U.transform_list() == [False,False])
+
+    def test_Normal(self):
+        N = Normal([1, 0.1])
+        self.assertTrue(N.transform_list() == [False, torch.exp])
+
+    def test_StudentT(self):
+        S = StudentT([3, 1])
+        self.assertTrue(S.transform_list() == [False, torch.exp])
+
+    # def test_MultivariateNormal(self):
+    #     M = MultivariateNormal([[1, 0], [[1, 0], [0, 1]]])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    # def test_MultiStudentT(self):
+    #     M = MultiStudentT([[1, 0], [[0.1, 0], [0, 0.1]], 1])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    def test_LogNormal(self):
+        LN = LogNormal([3, 1])
+        self.assertTrue(LN.transform_list() == [False, torch.exp])
+
+    def test_Exponential(self):
+        EXP = Exponential([3])
+        self.assertTrue(EXP.transform_list() == [torch.exp])
+
+class InverseTests(unittest.TestCase):
+    """Tests whether the dimensions of all continuous models are defined in the correct way."""
+
+    def test_Uniform(self):
+        U = Uniform([[0, 1], [1, 2]])
+        self.assertTrue(U.transform_list() == [False,False])
+
+    def test_Normal(self):
+        N = Normal([1, 0.1])
+        self.assertTrue(N.transform_list() == [False, torch.log])
+
+    def test_StudentT(self):
+        S = StudentT([3, 1])
+        self.assertTrue(S.transform_list() == [False, torch.log])
+
+    # def test_MultivariateNormal(self):
+    #     M = MultivariateNormal([[1, 0], [[1, 0], [0, 1]]])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    # def test_MultiStudentT(self):
+    #     M = MultiStudentT([[1, 0], [[0.1, 0], [0, 0.1]], 1])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    def test_LogNormal(self):
+        LN = LogNormal([3, 1])
+        self.assertTrue(LN.transform_list() == [False, torch.log])
+
+    def test_Exponential(self):
+        EXP = Exponential([3])
+        self.assertTrue(EXP.transform_list() == [torch.log])
+
+
+class GradPdfTests(unittest.TestCase):
+    """Tests whether the dimensions of all continuous models are defined in the correct way."""
+
+    def test_Uniform(self):
+        U = Uniform([[0, 1], [1, 2]])
+        self.assertTrue(U.gradlogpdf(1) == 0)
+
+    def test_Normal(self):
+        N = Normal([1, 0.1])
+        self.assertTrue(N.gradlogpdf(1) == 0.123456)
+
+    def test_StudentT(self):
+        S = StudentT([3, 1])
+        self.assertTrue(S.gradlogpdf(1) == 0.123456)
+
+    # def test_MultivariateNormal(self):
+    #     M = MultivariateNormal([[1, 0], [[1, 0], [0, 1]]])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    # def test_MultiStudentT(self):
+    #     M = MultiStudentT([[1, 0], [[0.1, 0], [0, 0.1]], 1])
+    #     self.assertTrue(M.transform_list() == 2)
+
+    def test_LogNormal(self):
+        LN = LogNormal([3, 1])
+        self.assertTrue(LN.gradlogpdf(1) == 0.123456)
+
+    def test_Exponential(self):
+        EXP = Exponential([3])
+        self.assertTrue(EXP.gradlogpdf(1) == 0.123456)
+
 
 if __name__ == '__main__':
     unittest.main()
