@@ -821,8 +821,9 @@ class GraphTools:
         """
         result = []
         for model in self.model:
-            try:
-                modelparams = model.transform_variables(model.get_input_values())
+            try: 
+                modelparams = self.apply_local_transform(model, model.get_input_values())
+                #modelparams = model.transform_variables(model.get_input_values())
             except:
                 modelparams = model.get_input_values()
             parameters_compatible = model._check_input(modelparams) # Changed to model.transform_variables(model.get_input_values()) from model.get_input_values() 
@@ -855,7 +856,8 @@ class GraphTools:
         for model in self.model:
             #print(model.get_input_values())
             try:
-                modelparams = model.transform_variables(model.get_input_values()) #self.transform()[0]
+                modelparams = self.apply_local_transform(model, model.get_input_values())
+                #modelparams = model.transform_variables(model.get_input_values()) #self.transform()[0]
             except:
                 modelparams = model.get_input_values()
             parameters_compatible = model._check_input(modelparams)
@@ -876,21 +878,51 @@ class GraphTools:
         Takes as input a n dimensional array of theta values from R^{DxN}
         Returns the transformed variables in their corresponding space in the model
         """
-        return [model.transform_variables(model.get_input_values()) for model in self.model]
+        return [self.apply_local_transform(model, model.get_input_values()) for model in self.model]
+        #return [model.transform_variables(model.get_input_values()) for model in self.model]
     
     def transform_post(self, model, variables):
         """
         Takes as input a n dimensional array of theta values from R^{DxN}
         Returns the transformed variables in their corresponding space in the model
         """
-        return [np.array(variable) for variable in model.transform_variables(variables)]
+        return [np.array(variable) for variable in self.apply_local_transform(model, variables)]
+        #return [np.array(variable) for variable in model.transform_variables(variables)]
     
+
+    # def jacobian(self):
+    #     print(" ////////")
+    #     print(self.jacobian_old())
+    #     print(self.jacobian_new())
+    #     print(" ////////")        
+    #     return self.jacobian_new()
+
+    # def jacobian_old(self):
+    #     # print(self.model[0].get_input_values())
+    #     # print(" ^ input value")
+    #     for model in self.model:
+    #         #print(str(model.get_input_values()) + str(" < - Jacobian input value"))
+    #         return model.transform_jacobian(model.get_input_values())
+
+
     def jacobian(self):
-        # print(self.model[0].get_input_values())
-        # print(" ^ input value")
-        for model in self.model:
-            #print(str(model.get_input_values()) + str(" < - Jacobian input value"))
-            return model.transform_jacobian(model.get_input_values())
+        element = self.model[0]
+        values = element.get_input_values()
+        output_array = [1.0] * len(values)
+        try:
+            transforms = element.jacobian_list()
+        except:
+            return values
+        inputmodels = element.get_input_models()
+        for index, element in enumerate(values):
+            transform = transforms[index]
+            # output_array[index] = element
+            if transform != False and ("Hyperparameter" not in str(inputmodels[index])):
+                output_array[index] = transforms[index](torch.tensor(element)).item()
+            #else:
+            #    output_array[index] = element
+
+        return np.diag(output_array)
     
     def current_input_values(self):
         for model in self.model:
@@ -1029,16 +1061,16 @@ class GraphTools:
         return output_array
 
 
-    def add_nulls_scoringrule(self, scoring_rule):
-        scoring_rule = scoring_rule.tolist()
-        mapping = self._get_mapping()[0]
-        array_n = [0.0] * len(mapping)
-        model = self.model[0]
-        base_models = model.get_input_models()
-        mapping_list = dict((x, y) for x, y in mapping)
-        for index, element in enumerate(base_models):
-            array_n[mapping_list[element]] = scoring_rule[index]
-        return np.array(array_n)
+    # def add_nulls_scoringrule(self, scoring_rule):
+    #     scoring_rule = scoring_rule.tolist()
+    #     mapping = self._get_mapping()[0]
+    #     array_n = [0.0] * len(mapping)
+    #     model = self.model[0]
+    #     base_models = model.get_input_models()
+    #     mapping_list = dict((x, y) for x, y in mapping)
+    #     for index, element in enumerate(base_models):
+    #         array_n[mapping_list[element]] = scoring_rule[index]
+    #     return np.array(array_n)
 
 
 

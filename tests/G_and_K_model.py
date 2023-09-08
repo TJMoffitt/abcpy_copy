@@ -104,7 +104,7 @@ class G_and_K(ProbabilisticModel, Continuous):
         
     def grad_forward_simulate(self,params, n, rng=None):
         
-        A, B, g, k = torch.tensor(params[0]), torch.tensor(params[1]), torch.tensor(params[2]), torch.tensor(params[3])
+        A, B, g, k = torch.tensor(float(params[0])), torch.tensor(float(params[1])), torch.tensor(float(params[2])), torch.tensor(float(params[3]))
         A.requires_grad_(True)
         B.requires_grad_(True)
         g.requires_grad_(True)
@@ -132,19 +132,19 @@ class G_and_K(ProbabilisticModel, Continuous):
     def jacobian_list(self):
         return self.ordered_transforms
     
-    def transform_variables(self, variables):
+    #def transform_variables(self, variables):
         # Takes as input: [np.array(theta1), ...... , np.array(theta_n)]
         # returns : list of transformed variables in correct space : [T(theta1), ..... , T(thetan)]
-        variables = self.to_tensor(variables)
-        transformed = variables
-        for index in range(0,len(variables)):
-            if self.ordered_transforms[index]:
-                transformed[index] = self.ordered_transforms[index](variables[index])
-        return transformed.tolist()
+    #    variables = self.to_tensor(variables)
+    #    transformed = variables
+    #    for index in range(0,len(variables)):
+    #        if self.ordered_transforms[index]:
+    #            transformed[index] = self.ordered_transforms[index](variables[index])
+    #    return transformed.tolist()
     
-    def to_tensor(self,variables):
-        arg = torch.tensor(variables, dtype=torch.float)#, requires_grad = True)
-        return arg
+    #def to_tensor(self,variables):
+    #    arg = torch.tensor(variables, dtype=torch.float)#, requires_grad = True)
+    #    return arg
 # Example usage
 #A, B, g, k = torch.tensor(0.0), torch.tensor(1.0), torch.tensor(0.5), torch.tensor(0.5)
 #A, B, g, k = 0.0, 1.0, 0.5, 0.5
@@ -152,31 +152,31 @@ class G_and_K(ProbabilisticModel, Continuous):
 #print(samples)
 #print(gradients)
 
-    def transform(self, variables):
-        return transform_variables(variables)
+    #def transform(self, variables):
+    #    return transform_variables(variables)
     
 
     
-    def inverse_transform(self, variables):
-        variables = self.to_tensor(variables)
-        transformed = variables
-        for index in range(0,len(variables)):
-            if self.ordered_transforms[index]:
-                transformed[index] = self.ordered_inverse_transforms[index](variables[index])
-        return transformed.tolist()
+    #def inverse_transform(self, variables):
+    #    variables = self.to_tensor(variables)
+    #    transformed = variables
+    #    for index in range(0,len(variables)):
+    #        if self.ordered_transforms[index]:
+    #            transformed[index] = self.ordered_inverse_transforms[index](variables[index])
+    #    return transformed.tolist()
 
-    def transform_jacobian(self, variables): # variables is probably not needed here
-        # Takes as input: [theta1, ..... , thetan]
-        # returns: np.array of the jacobian of the variable input wrt to the parameter transformations
-        # [dT(theta1)/dtheta1, ..... dT(theta_n)/dthetan] along the diagonal
-        array = []
-        for element_index, element in enumerate(variables):
-            x = torch.tensor(float(variables[element_index]), requires_grad = True)
-            if self.ordered_transforms[element_index]:
-                y = self.ordered_transforms[element_index](x)
-                y.backward()
-                dx = x.grad
-                array.append(dx)
-            else:
-                array.append(1)
-        return np.diag(array)
+    # def transform_jacobian(self, variables): # variables is probably not needed here
+    #     # Takes as input: [theta1, ..... , thetan]
+    #     # returns: np.array of the jacobian of the variable input wrt to the parameter transformations
+    #     # [dT(theta1)/dtheta1, ..... dT(theta_n)/dthetan] along the diagonal
+    #     array = []
+    #     for element_index, element in enumerate(variables):
+    #         x = torch.tensor(float(variables[element_index]), requires_grad = True)
+    #         if self.ordered_transforms[element_index]:
+    #             y = self.ordered_transforms[element_index](x)
+    #             y.backward()
+    #             dx = x.grad
+    #             array.append(dx)
+    #         else:
+    #             array.append(1)
+    #     return np.diag(array)

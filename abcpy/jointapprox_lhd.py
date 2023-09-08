@@ -111,8 +111,8 @@ class SumCombination(JointApprox_likelihood):
         d1, d2: list
             A list, containing lists describing the different data sets
         """
-        print(d1)
-        print(d2)
+        #print(d1)
+        #print(d2)
         if not isinstance(d1, list):
             raise TypeError('Data is not of allowed types')
         if not isinstance(d2, list):
@@ -134,6 +134,7 @@ class SumCombination(JointApprox_likelihood):
         d1, d2: list
             A list, containing lists describing the different data sets
         """
+
         if not isinstance(d1, list):
             print(d1)
             raise TypeError('Data is not of allowed types')

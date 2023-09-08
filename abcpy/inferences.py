@@ -5292,8 +5292,8 @@ class SGLD(BaseLikelihood, InferenceMethod):
 
         self.parameter_names = [model.name for model in models]  # store parameter names
 
-        print(self.parameter_names_with_index)
-        print(self.parameter_names)
+        #print(self.parameter_names_with_index)
+        #print(self.parameter_names)
 
         if kernel is None:
             kernel = DefaultKernel(models)
@@ -5585,11 +5585,9 @@ class SGLD(BaseLikelihood, InferenceMethod):
         base_models = model.get_input_models()
         mapping_list = dict((x, y) for x, y in self._get_mapping()[0])
         for index, element in enumerate(base_models):
-            print(element)
             try:
                 array_n[mapping_list[element]] = scoring_rule[index]
             except:
-                print("passed " + str(element))
                 pass
         return np.array(array_n)
 
@@ -5894,13 +5892,656 @@ class adSGLD(BaseLikelihood, InferenceMethod):
         base_models = model.get_input_models()
         mapping_list = dict((x, y) for x, y in self._get_mapping()[0])
         for index, element in enumerate(base_models):
-            print(element)
             try:
                 array_n[mapping_list[element]] = scoring_rule[index]
             except:
-                print("passed " + str(element))
                 pass
         return np.array(array_n)
+
+
+import numpy as np
+import torch
+import bisect
+#from src.pdmp.utils import mod_brent_corbella
+import bisect
+from scipy.stats import genextreme
+from scipy.optimize import minimize_scalar
+
+eps = 2.220446049250313E-016
+epsi_default = np.sqrt ( eps )
+t_default = 10.0 * np.sqrt ( eps )
+
+def local_min ( f, a, b, epsi = epsi_default, t=t_default, maxiter=50 ):
+
+#*****************************************************************************80
+#
+## LOCAL_MIN seeks a local minimum of a function F(X) in an interval [A,B].
+#
+#  Discussion:
+#
+#    The method used is a combination of golden section search and
+#    successive parabolic interpolation.  Convergence is never much slower
+#    than that for a Fibonacci search.  If F has a continuous second
+#    derivative which is positive at the minimum (which is not at A or
+#    B), then convergence is superlinear, and usually of the order of
+#    about 1.324....
+#
+#    The values EPSI and T define a tolerance TOL = EPSI * abs ( X ) + T.
+#    F is never evaluated at two points closer than TOL.
+#
+#    If F is a unimodal function and the computed values of F are always
+#    unimodal when separated by at least SQEPS * abs ( X ) + (T/3), then
+#    LOCAL_MIN approximates the abscissa of the global minimum of F on the
+#    interval [A,B] with an error less than 3*SQEPS*abs(LOCAL_MIN)+T.
+#
+#    If F is not unimodal, then LOCAL_MIN may approximate a local, but
+#    perhaps non-global, minimum to the same accuracy.
+#
+#    Thanks to Jonathan Eggleston for pointing out a correction to the 
+#    golden section step, 01 July 2013.
+#
+#  Licensing:
+#
+#    This code is distributed under the GNU LGPL license.
+#
+#  Modified:
+#
+#    03 December 2016
+#
+#  Author:
+#
+#    Original FORTRAN77 version by Richard Brent.
+#    Python version by John Burkardt.
+#
+#  Reference:
+#
+#    Richard Brent,
+#    Algorithms for Minimization Without Derivatives,
+#    Dover, 2002,
+#    ISBN: 0-486-41998-3,
+#    LC: QA402.5.B74.
+#
+#  Parameters:
+#
+#    Input, real A, B, the endpoints of the interval.
+#
+#    Input, real EPSI, a positive relative error tolerance.
+#    EPSI should be no smaller than twice the relative machine precision,
+#    and preferably not much less than the square root of the relative
+#    machine precision.
+#
+#    Input, real T, a positive absolute error tolerance.
+#
+#    Input, function value = F ( x ), the name of a user-supplied
+#    function whose local minimum is being sought.
+#
+#    Output, real X, the estimated value of an abscissa
+#    for which F attains a local minimum value in [A,B].
+#
+#    Output, real FX, the value F(X).
+#
+
+#
+#  C is the square of the inverse of the golden ratio.
+#
+  converged = False
+  c = 0.5 * ( 3.0 - np.sqrt ( 5.0 ) )
+
+  sa = a
+  sb = b
+  x = sa + c * ( b - a )
+  w = x
+  v = w
+  e = 0.0
+  fx = f ( x )
+  fw = fx
+  fv = fw
+  #maxiter = 1000
+  #while ( True ):
+  for iter in range(maxiter):
+
+    #print('At iteration ='+str(iter)+'x is'+str(x)+', sa is'+str(sa)+', sb is'+str(sb))
+
+    m = 0.5 * ( sa + sb )
+    tol = epsi * abs ( x ) + t
+    t2 = 2.0 * tol
+#
+#  Check the stopping criterion.
+#
+    if ( abs ( x - m ) <= t2 - 0.5 * ( sb - sa ) ):
+      converged=True
+      break
+#
+#  Fit a parabola.
+#
+    r = 0.0
+    q = r
+    p = q
+
+    if ( tol < abs ( e ) ):
+
+      r = ( x - w ) * ( fx - fv )
+      q = ( x - v ) * ( fx - fw )
+      p = ( x - v ) * q - ( x - w ) * r
+      q = 2.0 * ( q - r )
+
+      if ( 0.0 < q ):
+        p = - p
+
+      q = abs ( q )
+
+      r = e
+      e = d
+
+    if ( abs ( p ) < abs ( 0.5 * q * r ) and \
+         q * ( sa - x ) < p and \
+         p < q * ( sb - x ) ):
+#
+#  Take the parabolic interpolation step.
+#
+      d = p / q
+      u = x + d
+#
+#  F must not be evaluated too close to A or B.
+#
+      if ( ( u - sa ) < t2 or ( sb - u ) < t2 ):
+
+        if ( x < m ):
+          d = tol
+        else:
+          d = - tol
+#
+#  A golden-section step.
+#
+    else:
+
+      if ( x < m ):
+        e = sb - x
+      else:
+        e = sa - x
+
+      d = c * e
+#
+#  F must not be evaluated too close to X.
+#
+    if ( tol <= abs ( d ) ):
+      u = x + d
+    elif ( 0.0 < d ):
+      u = x + tol
+    else:
+      u = x - tol
+
+    fu = f ( u )
+#
+#  Update A, B, V, W, and X.
+#
+    if ( fu <= fx ):
+
+      if ( u < x ):
+        sb = x
+      else:
+        sa = x
+
+      v = w
+      fv = fw
+      w = x
+      fw = fx
+      x = u
+      fx = fu
+
+    else:
+
+      if ( u < x ):
+        sa = u
+      else:
+        sb = u
+
+      if ( fu <= fw or w == x ):
+        v = w
+        fv = fw
+        w = u
+        fw = fu
+      elif ( fu <= fv or v == x or v == w ):
+        v = u
+        fv = fu
+
+  return x, fx, sa, sb, iter, converged
+
+def mod_brent_corbella(upper_bound, func_to_min, eps=1e-6, round=True):
+  if round == False:
+    x, fx, sa, sb, iter, converged = local_min(func_to_min, 0, upper_bound)
+    Λbar = fx
+    evals = iter
+  elif round == True:
+    x, fx, sa, sb, iter, converged = local_min(func_to_min, 0, upper_bound, maxiter=2)
+    if converged == True:
+      Λbar = fx
+      evals = iter
+      print("converged")
+    else:
+      λlower = func_to_min(sa)
+      λcandidate = fx
+      # if (all(y->y==Optim.x_lower_trace(optimΛ)[1], Optim.x_lower_trace(optimΛ)) &&
+      if (λlower <= func_to_min(sa + eps) and λlower < λcandidate):
+        Λbar = λlower
+        evals = iter + 1
+        print("un converged close to LB")
+      else:
+        λupper = func_to_min(sb)
+        # if (all(y->y==Optim.x_upper_trace(optimΛ)[1], Optim.x_upper_trace(optimΛ))&&
+        if (λupper <= func_to_min(sb - eps) and λupper < λcandidate):
+          Λbar = λupper
+          evals = iter + 1
+        else:
+          x, fx, sa, sb, iter, converged = local_min(func_to_min, 0, upper_bound)
+          Λbar = fx
+          evals = iter + 1
+  else:
+    print("round should be either true or false")
+  return Λbar, evals
+
+class BoomerangSampler(BaseLikelihood, InferenceMethod):
+    """
+    Adaptive Stochastic Gradient Langevin Dyn working with the approximate likelihood functions Approx_likelihood
+
+    Adaptive Stochastic Gradient Langevin Dynamics Working with the approximate gradient log likelikhood.
+
+    Parameters
+    ----------
+    root_models : list
+        A list of the Probabilistic models corresponding to the observed datasets
+    gradloglikfuns : list of abcpy.approx_lhd.Approx_likelihood
+        List of Approx_loglikelihood object defining the approximated gradloglikelihood to be used; one for each model.
+    backend : abcpy.backends.Backend
+        Backend object defining the backend to be used.
+    #kernel : abcpy.perturbationkernel.PerturbationKernel, optional
+    #    PerturbationKernel object defining the perturbation kernel needed for the sampling. If not provided, the
+    #    DefaultKernel is used.
+    seed : integer, optional
+        Optional initial seed for the random number generator. The default value is generated randomly.
+
+    """
+
+    model = None
+    gradloglikfun = None
+    likfun = None     # Here for abstract class instatiation ( Remove (w class) or rewrite abstract for gradloglikfun)
+    kernel = None
+    rng = None
+
+    n_samples = None
+    n_samples_per_param = None
+
+    backend = None
+
+
+
+
+    def __init__(self, root_models, gradloglikfuns, backend, y_obs, sigma_ref, mu_ref, gradient, 
+                niter, lr, initial_t_max_guess, kernel=None, seed=None, noisy_gradient=False, q=0.9):
+        self.model = root_models
+        # We define the joint Sum of Loglikelihood functions using all the loglikelihoods for each individual models
+        self.gradloglikfun = SumCombination(root_models, gradloglikfuns)   # Gradloglikfuns here is being initialised as [EnergyScore(stat_calc, self.model, 2)]
+        self.likfun = SumCombination(root_models, gradloglikfuns)              # Delete This
+        mapping, garbage_index = self._get_mapping()
+        print(mapping)
+        models = []
+        self.parameter_names_with_index = {}
+        for mdl, mdl_index in mapping:
+            models.append(mdl)
+            self.parameter_names_with_index[mdl.name] = mdl_index  # dict storing param names with index
+
+        self.parameter_names = [model.name for model in models]  # store parameter names
+        print(self.parameter_names)
+
+        if kernel is None:
+            kernel = DefaultKernel(models)
+
+        self.kernel = kernel
+        self.backend = backend
+        self.rng = np.random.RandomState(seed)
+        self.logger = logging.getLogger(__name__)
+
+        # these are usually big tables, so we broadcast them to have them once
+        # per executor instead of once per task
+        self.accepted_parameters_manager = AcceptedParametersManager(self.model)            # The need for this is questionsable
+        # this is used to handle the data for adapting the covariance:
+        self.accepted_parameters_manager_adaptive_cov = AcceptedParametersManager(self.model)
+
+        self.simulation_counter = 0
+
+        self.dummy_backend = BackendDummy()
+
+        np.random.seed(seed)
+        self.observations = [y_obs]
+
+        #self.gradient = gradient
+        self.sample_from_prior()
+        self.initial_pos = [parameter.item() for parameter in self.get_parameters()] #initial_pos
+        print(self.initial_pos)
+        self.d = len(self.initial_pos)
+        print(self.d)
+        self.niter = niter
+        self.lr = lr
+        self.sigma_ref = sigma_ref
+        self.mu_ref = mu_ref
+        self.t_max = initial_t_max_guess
+        self.no_refresh = 0
+        self.no_switch = 0
+        self.noisy_gradient = noisy_gradient
+        self.q = q
+        self.no_exceeded_bounds = 0
+        self.no_refresh_events = 0
+        self.no_horizon_events = 0
+        self.model = root_models
+
+    def elliptic_dynamics(self, x, v, t):
+        print(" /// ")
+        print(x)
+        print(v)
+        print(t)
+        print(" /// ")
+        x_t = self.mu_ref + (x - self.mu_ref) * np.cos(t) + v * np.sin(t)
+        v_t = - (x - self.mu_ref) * np.sin(t) + v * np.cos(t)
+        print([x_t, v_t])
+        return np.array([x_t, v_t])
+
+    def rate(self, time, pos, vel, seed=None):
+        #return 100
+        skel = self.elliptic_dynamics(pos, vel, time)
+        #print(str(skel[0]) + " < Skel[0]")
+        if seed:
+            grad = self.gradient(skel[0], seed)
+            print(str(grad) + " < Gradient")
+            print(skel[1])
+            return (np.dot(skel[1], grad)>0)*np.dot(skel[1], grad)
+        else:
+            grad = self.gradient(skel[0])
+            print(str(grad) + " < Gradient")
+            return (np.dot(skel[1], grad)>0)*np.dot(skel[1], grad)
+           #return (np.dot(skel[1], self.gradient(skel[0]))>0)*np.dot(skel[1], self.gradient(skel[0]))
+
+    def trajectory_sample(self, no_samples=None):
+        if no_samples is None:
+            no_samples = self.niter
+        skel_t = np.vstack([x[0] for x in self.skeleton]).reshape(-1)
+        skel_v = np.vstack([x[2] for x in self.skeleton])
+        skel_x = np.vstack([x[1] for x in self.skeleton])
+
+        traj_corr_samples = []
+        sample_time = np.linspace(0, skel_t[-1] - 10e-5, no_samples)
+        for iter_time in sample_time:
+            iter_index = bisect.bisect_left(skel_t, iter_time) - 1 #t in [t_k, tK+1], index of t_k
+            traj_corr_samples.append(self.elliptic_dynamics(skel_x[iter_index,:], skel_v[iter_index,:], iter_time - skel_t[iter_index])[0])
+
+        return np.vstack(traj_corr_samples)
+    
+    def estimate_upper_bound(self, x, v):
+        """ Estimate upper bound using Brent's method"""
+        if self.noisy_gradient:
+            rates = []
+            for seed in range(10):
+                negglobrate = lambda t: - self.rate(t, x, v, seed=seed)
+                brent_min, funeval = mod_brent_corbella(self.t_max, negglobrate, eps=1e-6, round=False)
+                #self.tot_fun_eval = self.tot_fun_eval + funeval
+                upper_bound = - brent_min
+                rates.append(upper_bound)
+            #for seed i, upper bound 
+            rates = np.vstack(rates)
+
+            c, loc, scale = genextreme.fit(rates)
+            upper_bound = genextreme.ppf(self.q, c, loc,scale)
+            if upper_bound > 10000 or upper_bound < 0.01:
+                print("WARNING: upper bound is very large/small")
+            print(f"estimated upper bound: {upper_bound}")
+        else:
+            negglobrate = lambda t: - self.rate(t, x, v)
+            brent_min, funeval = mod_brent_corbella(self.t_max, negglobrate, eps=1e-6, round=False)
+            #self.tot_fun_eval = self.tot_fun_eval + funeval
+            upper_bound = - brent_min
+
+        if upper_bound==0:
+            print('bound became zero, adding a small perturbation')
+            upper_bound = upper_bound + 10e-7
+
+        return upper_bound
+    
+    def sample(self):
+        self.skeleton = [(0, self.initial_pos, np.random.multivariate_normal(np.zeros(self.d), np.eye(self.d), size=1).reshape(-1))] # [(time, position, velocity)] list of tuples 
+        self.skel_count = 1
+        T, x, v = self.skeleton[0] 
+        print(x)
+        upper_bound = self.estimate_upper_bound(x, v)
+        tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+        tau_opt = tau_star #Tau optimal is the time since last upper bound optimisation
+        tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+
+        while self.skel_count < self.niter:
+            print(" iteration ")
+            #print(x)
+            #Main loop
+            u = 0 
+            while tau_opt == np.min(np.array([self.t_max, tau_opt, tau_ref])) and u == 0:
+                # Loop invariant: tau_opt is the minimum of the three
+                lambda_opt = self.rate(tau_opt, x, v)
+                print(lambda_opt)
+                print(str(upper_bound) + " < upper bound")
+                if(lambda_opt/upper_bound > 1):
+                    self.no_exceeded_bounds += 1
+                    print("No of exceeded bounds: ", self.no_exceeded_bounds / self.skel_count)
+                    upper_bound = lambda_opt
+                print(str(lambda_opt/upper_bound))
+                u = np.random.binomial(1, lambda_opt/upper_bound)#np.clip(lambda_opt/upper_bound, 0, 1))
+                if u == 1:
+                    # Accept the proposed switching time with probability lambda_opt/upper_bound
+                    # Update T,x,v
+                    T = T + tau_opt
+                    x, v = self.elliptic_dynamics(x, v, tau_opt)
+                    print(str(x) + " < x")
+                    grad_x = self.gradient(x)
+                    v = v - 2*np.dot(((np.dot(v,grad_x))/(np.linalg.norm(np.dot(np.linalg.cholesky(self.sigma_ref),grad_x))**2)),np.dot(self.sigma_ref,grad_x))
+                    self.skeleton.append((T, x, v)) #Update skeleton
+                    self.skel_count += 1
+                    print(f"Switch Event :{self.skel_count}")
+                    #print(x)
+
+                    # Update upper bound
+                    upper_bound = self.estimate_upper_bound(x, v)
+                    tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+                    tau_opt = tau_star
+                    tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+                else:
+                    # Reject the proposed switching time
+                    tau_star = np.random.exponential(1/upper_bound)
+                    tau_opt = tau_opt + tau_star
+
+            #Checking u=0 to enforce that if skeleton point was accepted in switch event, wait until next loop 
+            if tau_ref == np.min(np.array([self.t_max, tau_opt, tau_ref])) and u == 0:
+                #Refreshment time is reached
+                self.no_refresh_events += 1
+                T = T + tau_ref
+                x, v = self.elliptic_dynamics(x, v, tau_ref)[0], np.random.multivariate_normal(np.zeros(self.d), self.sigma_ref)
+                self.skeleton.append((T, x, v)) #Update skeleton
+                self.skel_count += 1
+                print(self.skel_count)
+                print(f"Refresh Event : {x}")
+
+                # Update upper bound
+                upper_bound = self.estimate_upper_bound(x, v)
+                tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+                tau_opt = tau_star
+                tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+
+            if self.t_max == np.min(np.array([self.t_max, tau_opt, tau_ref])) and u == 0:
+                # Horizon is reached
+                self.no_horizon_events += 1
+                T = T + self.t_max
+                x, v = self.elliptic_dynamics(x, v, self.t_max)
+
+                # Update upper bound
+                upper_bound = self.estimate_upper_bound(x, v)
+                tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+                tau_opt = tau_star
+                tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+
+        if(self.no_exceeded_bounds > 0):
+            print("No of exceeded bounds: ", self.no_exceeded_bounds)
+    
+
+
+    # def sample(self):
+    #     self.skeleton = [(0, self.initial_pos, np.random.multivariate_normal(np.zeros(self.d), np.eye(self.d), size=1).reshape(-1))] # [(time, theta=(x, alpha), velocity)] list of tuples 
+    #     self.skel_count = 1
+    #     T, theta, v = self.skeleton[0] 
+    #     x, alpha = theta
+    #     upper_bound = self.estimate_upper_bound((x, alpha), v)
+    #     tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+    #     tau_opt = tau_star #Tau optimal is the time since last upper bound optimisation
+    #     tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+    #     tau_gibbs = np.random.exponential(self.gibbs_ref) #Obtain gibbs time
+
+    #     while self.skel_count < self.niter:
+    #         #Debug 
+    #         if self.skel_count == 1000:
+    #             print("debug here")
+    #         #Main loop
+    #         u = 0 
+    #         proposal_counter = 0
+    #         while tau_opt == np.min(np.array([self.t_max, tau_opt, tau_ref, tau_gibbs])) and u == 0:
+    #             # Loop invariant: tau_opt is the minimum of the three
+    #             lambda_opt = self.rate(tau_opt, (x, alpha), v)
+    #             if(lambda_opt/upper_bound > 1):
+    #                 self.no_exceeded_bounds += 1
+    #                 print("No of exceeded bounds: ", self.no_exceeded_bounds / self.skel_count)
+    #                 upper_bound = lambda_opt
+
+    #             if(lambda_opt == 0):
+    #                 #print("debug here")
+    #                 pass
+
+    #             u = np.random.binomial(1, lambda_opt/upper_bound)#np.clip(lambda_opt/upper_bound, 0, 1))
+    #             if u == 1:
+    #                 # Accept the proposed switching time with probability lambda_opt/upper_bound
+    #                 # Update T,theta=(x,alpha),v
+    #                 T = T + tau_opt
+    #                 x, v = self.elliptic_dynamics(x, v, tau_opt)
+    #                 grad_x = self.gradient((x, alpha))
+    #                 v = v - 2*np.dot(((np.dot(v,grad_x))/(np.linalg.norm(np.dot(np.linalg.cholesky(self.sigma_ref),grad_x))**2)),np.dot(self.sigma_ref,grad_x))
+    #                 self.skeleton.append((T, (x, alpha), v)) #Update skeleton
+    #                 self.skel_count += 1
+    #                 print(f"Switch Event :{self.skel_count}")
+    #                 print(x)
+
+    #                 # Update upper bound
+    #                 upper_bound = self.estimate_upper_bound((x, alpha), v)
+    #                 tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+    #                 tau_opt = tau_star
+    #                 tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+    #                 tau_gibbs = np.random.exponential(self.gibbs_ref) #Obtain gibbs time
+    #             else:
+    #                 # Reject the proposed switching time
+    #                 tau_star = np.random.exponential(1/upper_bound)
+    #                 tau_opt = tau_opt + tau_star
+
+    #             proposal_counter += 1
+
+    #         self.proposals.append(proposal_counter)
+
+    #         #Checking u=0 to enforce that if skeleton point was accepted in switch event, wait until next loop 
+    #         if tau_ref == np.min(np.array([self.t_max, tau_opt, tau_ref, tau_gibbs])) and u == 0:
+    #             #Refreshment time is reached
+    #             self.no_refresh_events += 1
+    #             T = T + tau_ref
+    #             x, v = self.elliptic_dynamics(x, v, tau_ref)[0], np.random.multivariate_normal(np.zeros(self.d), self.sigma_ref)
+    #             self.skeleton.append((T, (x, alpha), v)) #Update skeleton
+    #             self.skel_count += 1
+    #             print(self.skel_count)
+    #             print(f"Refresh Event : {x}")
+
+    #             # Update upper bound
+    #             upper_bound = self.estimate_upper_bound((x, alpha), v)
+    #             tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+    #             tau_opt = tau_star
+    #             tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+    #             tau_gibbs = np.random.exponential(self.gibbs_ref) #Obtain gibbs time
+
+    #         if self.t_max == np.min(np.array([self.t_max, tau_opt, tau_ref, tau_gibbs])) and u == 0:
+    #             # Horizon is reached
+    #             self.no_horizon_events += 1
+    #             T = T + self.t_max
+    #             x, v = self.elliptic_dynamics(x, v, self.t_max)
+    #             print(f"Horizon Event : {x}")
+
+    #             # Update upper bound
+    #             upper_bound = self.estimate_upper_bound((x, alpha), v)
+    #             tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+    #             tau_opt = tau_star
+    #             tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+    #             tau_gibbs = np.random.exponential(self.gibbs_ref) #Obtain gibbs time
+
+            
+    #         if tau_gibbs == np.min(np.array([self.t_max, tau_opt, tau_ref, tau_gibbs])) and u == 0:
+    #             #Gibbs Step
+    #             self.no_gibbs_events += 1
+    #             previous_sigma_ref_diag = (alpha[0]) * (alpha[1:])
+    #             # alpha = self.gibbs_sampler((x, alpha))
+    #             alpha = self.sample_from_prior(rng=self.rng)
+    #             T = T + tau_gibbs
+    #             x, v = self.elliptic_dynamics(x, v, tau_gibbs)
+
+    #             # Update the sigma_ref if we use adaptive preconditioning, otherwise don't 
+    #             if self.adaptive:
+    #                 # This is a rather specific preconditioning matrix which is the form for the horseshoe prior
+    #                 # Should probably change this to be more general?
+    #                 self.sigma_ref = (alpha[0] ** 2) * np.diag(alpha[1:] ** 2)
+    #                 new_sigma_ref_diag = (alpha[0]) * (alpha[1:])
+
+    #                 # Adjust the velocity if we use adaptive preconditioning
+    #                 # Both sigma_refs are diagonal matrices
+    #                 #v = (new_sigma_ref_diag / previous_sigma_ref_diag) * v
+
+    #             self.skeleton.append((T, (x, alpha), v)) #Update skeleton
+    #             self.skel_count += 1
+    #             print(self.skel_count)
+    #             print(f"Gibbs Event : {alpha}")
+
+    #             # Update upper bound
+    #             upper_bound = self.estimate_upper_bound((x, alpha), v)
+    #             tau_star = np.random.exponential(1/upper_bound) #Propose switching time
+    #             tau_opt = tau_star
+    #             tau_ref = np.random.exponential(self.lr) #Obtain refresh time
+    #             tau_gibbs = np.random.exponential(self.gibbs_ref) #Obtain gibbs time
+
+
+    #     if(self.no_exceeded_bounds > 0):
+    #         print("No of exceeded bounds: ", self.no_exceeded_bounds)
+
+    def add_nulls_scoringrule(self, scoring_rule):
+        scoring_rule = scoring_rule.tolist()
+        array_n = [0.0] * len(self.parameter_names_with_index)
+        model = self.model[0]
+        base_models = model.get_input_models()
+        mapping_list = dict((x, y) for x, y in self._get_mapping()[0])
+        for index, element in enumerate(base_models):
+            try:
+                array_n[mapping_list[element]] = scoring_rule[index]
+            except:
+                pass
+        return np.array(array_n)
+
+    def gradient(self, accepted_parameter, seed = None):
+        #print("computing Gradient")
+        #print(accepted_parameter)
+        self.w = 100
+        # We define the gradient by the gradient of the scoring rule at a given point
+        current_parameter_grad_log_prior_pdf = np.array(self.grad_log_pdf_of_prior(self.model, self.apply_full_transform(accepted_parameter))) # You dont need to specify self.model or accepted_parameter here.... just pull directly in grad_log_pdf_of_prior
+        current_parameter_grad_log_prior_pdf = np.dot(current_parameter_grad_log_prior_pdf, np.diag(self.apply_jacobian(accepted_parameter)))
+
+        self.simulated_values = self.gradsimulate(100) # CHECK THISSSS
+        parameter_grad_scoring_rule_value = np.dot(self.gradloglikfun.gradloglikelihood(self.observations,self.simulated_values)[0], self.jacobian())
+        parameter_grad_scoring_rule_value = self.add_nulls_scoringrule(parameter_grad_scoring_rule_value)
+        estimate_grad_u_theta = current_parameter_grad_log_prior_pdf + self.w*parameter_grad_scoring_rule_value
+        return estimate_grad_u_theta
+
 
 
     # def base_positions(self):

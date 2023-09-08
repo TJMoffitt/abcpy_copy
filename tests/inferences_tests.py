@@ -8,7 +8,7 @@ from abcpy.continuousmodels import Normal, LogNormal
 from abcpy.continuousmodels import Uniform
 from abcpy.distances import Euclidean, MMD
 from abcpy.inferences import DrawFromPrior, RejectionABC, PMC, PMCABC, SABC, ABCsubsim, SMCABC, APMCABC, RSMCABC, \
-    MCMCMetropoliHastings, adSGLD, SGLD
+    MCMCMetropoliHastings, adSGLD, SGLD, BoomerangSampler
 from abcpy.statistics import Identity
 from Gaussian_model import Gaussian
 # from Lorenz95_model import StochLorenz95
@@ -1344,8 +1344,8 @@ class adsgldTests_Live():
         dummy = BackendDummy()
 
         # define a uniform prior distribution
-        mu = Normal([4, 1], name='mu')
-        sigma = LogNormal([1,1], name='sigma')
+        #mu = Normal([4, 3], name='mu')
+        #sigma = LogNormal([1,1], name='sigma')
 
         A = Normal([5, 1], name='A')
         B = LogNormal([1,1], name='B')
@@ -1372,33 +1372,37 @@ class adsgldTests_Live():
         #dist_calc = Energy
 
         # create fake observed data
-        #self.y_obs = self.model.forward_simulate([5,1], 100, rng=np.random.RandomState(8))  # Correct
         self.y_obs = self.model.forward_simulate([5,1,0,1], 100, rng=np.random.RandomState(8))  # Correct
+        #self.y_obs = self.model.forward_simulate([5,1,0,1], 100, rng=np.random.RandomState(8))  # Correct
         # self.y_obs = self.model.forward_simulate([2,1,3,3], 20)  # Correct
         #print(self.y_obs)
-        print(np.sum(self.y_obs)/30)
+        #print(np.sum(self.y_obs)/30)
         #print(self.y_obs)
         #print("hello world")
         # for correct seeding define 2 samplers
         self.sampler = adSGLD([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
         #self.sampler = PreconditionedSGLD([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
+        #self.sampler = BoomerangSampler([self.model], [dist_calc], dummy, self.y_obs, np.eye(2), np.zeros(2), "gradient", 1000, 0.001, 5.0, seed=1, noisy_gradient=False, q=0.9)
 
-
-        #self.sampler2 = Testing_Grad_Prior([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
+    # def __init__(self, root_models, gradloglikfuns, backend, y_obs, sigma_ref, mu_ref, gradient, niter, lr, 
+    #             initial_t_max_guess, kernel=None, seed=None, noisy_gradient=False, q=0.9):
+    #     #self.sampler2 = Testing_Grad_Prior([self.model], [dist_calc], dummy, seed=1)#basic_adSGLD([self.model], [dist_calc], dummy, seed=1)
 
     def test_sample_n_samples(self):
         # use the rejection sampling scheme
         # journal = self.sampler.sample([self.y_obs], 100, 20, 400, step_size=0.0003, w_val = 40, path_to_save_journal="tmp.jnl")
         #journal = self.sampler.sample([self.y_obs],['mu','sigma'], 100, 100, 1000, step_size=0.00001, w_val = 10, path_to_save_journal="tmp.jnl") 
+        #journal = self.sampler.sample([self.y_obs], 100, 100, 1000, step_size=0.0003, w_val = 300, diffusion_factor=0.01, path_to_save_journal="tmp.jnl") 
         journal = self.sampler.sample([self.y_obs], 100, 100, 1000, step_size=0.0003, w_val = 300, diffusion_factor=0.01, path_to_save_journal="tmp.jnl") 
-
+        #journal = self.sampler.sample()
+        print(journal)
         #journal = self.sampler.sample([self.y_obs], 100, n_samples_per_param=20, burnin=1500, step_size=0.0003, w_val = 30, path_to_save_journal="tmp.jnl") 
         #mu_sample = np.array(journal.get_parameters()['mu'])
         #sigma_sample = np.array(journal.get_parameters()['sigma'])
-        print("a")
+        #print("a")
         print(journal.plot_posterior_distr(path_to_save="posterior.png"))
         print(journal.traceplot())
-        print(" Completed")
+        #print(" Completed")
         print(mu_sample)
         print(sigma_sample)
         # test shape of samples
